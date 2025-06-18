@@ -1,0 +1,17 @@
+#include <Arduino.h>
+
+const int RED_PIN = D0;
+const int BLUE_PIN = D1;
+const int GREEN_PIN = D2;
+const int YELLOW_PIN = D3;
+
+void wifi_connect(int pin_to_blink);
+
+void setup_lights();
+void hue_connect(int pin_to_blink);
+void zigbee_check_for_reset(int button);
+
+void ledDigital(int* left, int period, int pin, int sleep);
+void ledAnalog(int* left, int period, int pin, int sleep);
+
+void hue_reset();

@@ -1,0 +1,47 @@
+# PlatformIO
+.pio
+
+# VS Code
+.vscode/
+
+# Build outputs and temporary files
+build/
+*.bin
+*.elf
+*.map
+*.hex
+
+# ESP-IDF specific
+sdkconfig*
+dependencies.lock
+managed_components/
+
+# IDE and editor files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# OS specific
+.Trash-*
+*.tmp
+*.temp
+
+# Logs and debugging
+*.log
+monitor.log
+crash.log
+
+# Personal configuration
+secrets.h
+config.h
+*.local
+
+# Cache and temporary directories
+.cache/
+.temp/
+
+src/secrets.h
+
+.claude
