@@ -17,11 +17,11 @@ int ledBuiltinLeft = LED_BUILTIN_PERIOD;
 
 uint8_t button = BOOT_PIN;
 
-
-void setup() {
-  Serial.begin(115200);  
+void setup()
+{
+  Serial.begin(115200);
   delay(5000);
-  //hue_reset();  
+  // hue_reset();
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(RED_PIN, OUTPUT);
   pinMode(BLUE_PIN, OUTPUT);
@@ -29,7 +29,8 @@ void setup() {
   pinMode(YELLOW_PIN, OUTPUT);
   pinMode(button, INPUT_PULLUP);
 
-  for (int p = 0; p < D9; p++) {
+  for (int p = 0; p < D9; p++)
+  {
     digitalWrite(p, LOW);
   }
 
@@ -42,8 +43,8 @@ void setup() {
   delay(500);
 }
 
-
-void loop() {
+void loop()
+{
   ledDigital(&ledBuiltinLeft, LED_BUILTIN_PERIOD, LED_BUILTIN, SLEEP);
   delay(SLEEP);
 

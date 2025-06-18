@@ -7,19 +7,21 @@
 
 #include <Zigbee.h>
 
-static ZigbeeHueLight* zbTemperatureLight = nullptr;
-static ZigbeeHueLight* zbColorLight = nullptr;
-static ZigbeeHueLight* zbDimmableLight = nullptr;
-static ZigbeeHueLight* zbColorOnOffLight = nullptr;
-static ZigbeeHueLight* zbColorTemperatureLight = nullptr;
+static ZigbeeHueLight *zbTemperatureLight = nullptr;
+static ZigbeeHueLight *zbColorLight = nullptr;
+static ZigbeeHueLight *zbDimmableLight = nullptr;
+static ZigbeeHueLight *zbColorOnOffLight = nullptr;
+static ZigbeeHueLight *zbColorTemperatureLight = nullptr;
 
-void hue_connect(int pin_to_blink) {
-  uint8_t phillips_hue_key[] = { 0x81, 0x45, 0x86, 0x86, 0x5D, 0xC6, 0xC8, 0xB1, 0xC8, 0xCB, 0xC4, 0x2E, 0x5D, 0x65, 0xD3, 0xB9 };
+void hue_connect(int pin_to_blink)
+{
+  uint8_t phillips_hue_key[] = {0x81, 0x45, 0x86, 0x86, 0x5D, 0xC6, 0xC8, 0xB1, 0xC8, 0xCB, 0xC4, 0x2E, 0x5D, 0x65, 0xD3, 0xB9};
   Zigbee.setEnableJoiningToDistributed(true);
   Zigbee.setStandardDistributedKey(phillips_hue_key);
 
   // When all EPs are registered, start Zigbee in End Device mode
-  if (!Zigbee.begin()) {
+  if (!Zigbee.begin())
+  {
     Serial.println("Zigbee failed to start!");
     Serial.println("Rebooting...");
     ESP.restart();
@@ -35,7 +37,8 @@ void hue_connect(int pin_to_blink) {
 
   digitalWrite(GREEN_PIN, HIGH);
   Serial.println("Connecting Zigbee to network");
-  while (!Zigbee.connected()) {
+  while (!Zigbee.connected())
+  {
     Serial.print(".");
     digitalWrite(pin_to_blink, HIGH);
     delay(100);
@@ -45,14 +48,17 @@ void hue_connect(int pin_to_blink) {
   digitalWrite(pin_to_blink, HIGH);
 }
 
-
-void setLight(bool state, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature) {
-  if (!state) {
+void setLight(bool state, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature)
+{
+  if (!state)
+  {
     analogWrite(BLUE_PIN, 0);
     analogWrite(RED_PIN, 0);
     analogWrite(GREEN_PIN, 0);
     digitalWrite(YELLOW_PIN, 0);
-  } else {
+  }
+  else
+  {
     Serial.print("\nlevel ");
     Serial.print(level);
     Serial.print("\nblue ");
@@ -74,19 +80,24 @@ void setLight(bool state, uint8_t red, uint8_t green, uint8_t blue, uint8_t leve
 }
 
 // Create a task on identify call to handle the identify function
-void identify(uint16_t time) {
+void identify(uint16_t time)
+{
   log_d("Identify called for %d seconds", time);
 }
 
-void zigbee_check_for_reset(int button) {
+void zigbee_check_for_reset(int button)
+{
   // Checking button for factory reset
-  if (digitalRead(button) == LOW) {  // Push button pressed
+  if (digitalRead(button) == LOW)
+  { // Push button pressed
     // Key debounce handling
     delay(100);
     int startTime = millis();
-    while (digitalRead(button) == LOW) {
+    while (digitalRead(button) == LOW)
+    {
       delay(50);
-      if ((millis() - startTime) > 3000) {
+      if ((millis() - startTime) > 3000)
+      {
         // If key pressed for more than 3secs, factory reset Zigbee and reboot
         Serial.println("Resetting Zigbee to factory and rebooting in 1s.");
         delay(1000);
@@ -96,11 +107,13 @@ void zigbee_check_for_reset(int button) {
   }
 }
 
-void hue_reset() {
+void hue_reset()
+{
   Zigbee.factoryReset();
 }
 
-void setup_lights() {
+void setup_lights()
+{
 
   zbTemperatureLight = new ZigbeeHueLight(0x0B, ESP_ZB_HUE_LIGHT_TYPE_TEMPERATURE);
   zbColorLight = new ZigbeeHueLight(0x0C, ESP_ZB_HUE_LIGHT_TYPE_COLOR);
@@ -131,7 +144,6 @@ void setup_lights() {
   zbTemperatureLight->setOnOffOnTime(0);
   zbTemperatureLight->setOnOffGlobalSceneControl(false);
   Zigbee.addEndpoint(zbTemperatureLight);
-
 
   zbColorTemperatureLight->onLightChange(setLight);
   zbColorTemperatureLight->onIdentify(identify);
