@@ -11,15 +11,16 @@ const int BROADCAST_DELAY = 500;           // Delay between broadcasts in ms
 const int SOCKET_TIMEOUT = 1000;           // Socket receive timeout in ms
 const int RETRY_BROADCAST_INTERVAL = 3000; // Retry broadcast every 3 seconds
 
-void scanForWiz(IPAddress broadcastIP)
+std::vector<WizBulbInfo> scanForWiz(IPAddress broadcastIP)
 {
+    std::vector<WizBulbInfo> discoveredBulbs;
     WiFiUDP udp;
 
     // Use a different port for listening to avoid conflicts
     if (!udp.begin(38900))
     {
         Serial.println("Failed to start UDP for Wiz discovery");
-        return;
+        return discoveredBulbs;
     }
 
     Serial.println("=== Wiz Lights Discovery Tool ===");
@@ -162,8 +163,6 @@ void scanForWiz(IPAddress broadcastIP)
         }
     }
 
-    udp.stop();
-
     if (deviceCount > 0)
     {
         Serial.println("\n=== Discovery completed successfully ===");
@@ -180,7 +179,14 @@ void scanForWiz(IPAddress broadcastIP)
         for (size_t i = 0; i < discoveredIPs.size(); i++)
         {
             Serial.printf("\nDevice %d/%d: %s\n", i + 1, discoveredIPs.size(), discoveredIPs[i].toString().c_str());
-            getSystemConfig(discoveredIPs[i]);
+            WizBulbInfo bulbInfo = getSystemConfig(discoveredIPs[i]);
+            
+            if (!bulbInfo.isValid) {
+                Serial.printf("  Failed to get configuration: %s\n", bulbInfo.errorMessage.c_str());
+            }
+            
+            // Add bulb to results regardless of configuration success
+            discoveredBulbs.push_back(bulbInfo);
 
             // Add delay between config requests to prevent overwhelming devices
             if (i < discoveredIPs.size() - 1)
@@ -190,7 +196,7 @@ void scanForWiz(IPAddress broadcastIP)
         }
 
         Serial.println("\n=== All device information collected ===");
-        Serial.println("You can now control these lights using their IP addresses.");
+        Serial.printf("Successfully discovered %d Wiz light(s) with capabilities.\n", discoveredBulbs.size());
     }
     else
     {
@@ -205,16 +211,107 @@ void scanForWiz(IPAddress broadcastIP)
         Serial.println("2. Check if lights are on the same network segment");
         Serial.println("3. Verify firewall settings allow UDP broadcasts");
     }
+    
+    udp.stop();
+    return discoveredBulbs;
 }
 
-void getSystemConfig(IPAddress deviceIP)
+BulbClass determineBulbClass(const String& moduleName) {
+    String moduleNameUpper = moduleName;
+    moduleNameUpper.toUpperCase();
+    
+    // Based on pywizlight module name parsing
+    if (moduleNameUpper.indexOf("ESP01_SHRGB") >= 0 || 
+        moduleNameUpper.indexOf("ESP56_SHRGB") >= 0 ||
+        moduleNameUpper.indexOf("SHRGB") >= 0) {
+        return BulbClass::RGB;
+    }
+    else if (moduleNameUpper.indexOf("ESP01_SHTW") >= 0 ||
+             moduleNameUpper.indexOf("ESP56_SHTW") >= 0 ||
+             moduleNameUpper.indexOf("SHTW") >= 0 ||
+             moduleNameUpper.indexOf("TW") >= 0) {
+        return BulbClass::TW;
+    }
+    else if (moduleNameUpper.indexOf("ESP01_SHDW") >= 0 ||
+             moduleNameUpper.indexOf("ESP56_SHDW") >= 0 ||
+             moduleNameUpper.indexOf("SHDW") >= 0 ||
+             moduleNameUpper.indexOf("DW") >= 0) {
+        return BulbClass::DW;
+    }
+    else if (moduleNameUpper.indexOf("SOCKET") >= 0) {
+        return BulbClass::SOCKET;
+    }
+    else if (moduleNameUpper.indexOf("FAN") >= 0) {
+        return BulbClass::FAN;
+    }
+    else if (moduleNameUpper.indexOf("RGBW") >= 0) {
+        return BulbClass::RGBW;
+    }
+    
+    return BulbClass::UNKNOWN;
+}
+
+Features determineBulbFeatures(BulbClass bulbClass) {
+    Features features;
+    
+    switch (bulbClass) {
+        case BulbClass::RGB:
+            features.brightness = true;
+            features.color = true;
+            features.effect = true;
+            features.kelvin_range = {2200, 6500};
+            break;
+            
+        case BulbClass::RGBW:
+            features.brightness = true;
+            features.color = true;
+            features.color_tmp = true;
+            features.effect = true;
+            features.kelvin_range = {2200, 6500};
+            break;
+            
+        case BulbClass::TW:
+            features.brightness = true;
+            features.color_tmp = true;
+            features.kelvin_range = {2700, 6500};
+            break;
+            
+        case BulbClass::DW:
+            features.brightness = true;
+            features.kelvin_range = {2700, 2700}; // Fixed warm white
+            break;
+            
+        case BulbClass::FAN:
+            features.brightness = true;
+            features.fan = true;
+            features.kelvin_range = {2700, 6500};
+            break;
+            
+        case BulbClass::SOCKET:
+            // Socket only supports on/off
+            break;
+            
+        default:
+            // Unknown - assume basic brightness
+            features.brightness = true;
+            break;
+    }
+    
+    return features;
+}
+
+WizBulbInfo getSystemConfig(IPAddress deviceIP)
 {
+    WizBulbInfo bulbInfo;
+    bulbInfo.ip = deviceIP.toString();
+    
     WiFiUDP udp;
 
     if (!udp.begin(0))
     { // Use random port
         Serial.println("Failed to start UDP for system config request");
-        return;
+        bulbInfo.errorMessage = "Failed to start UDP";
+        return bulbInfo;
     }
 
     // System config request
@@ -269,21 +366,53 @@ void getSystemConfig(IPAddress deviceIP)
                         JsonObject result = doc["result"];
 
                         // Extract key information safely
-                        const char *moduleName = result["moduleName"] | "Unknown";
-                        const char *fwVersion = result["fwVersion"] | "Unknown";
-                        const char *mac = result["mac"] | "Unknown";
-                        int rssi = result["rssi"] | 0;
-                        const char *src = result["src"] | "Unknown";
-                        const char *homeId = result["homeId"] | "Unknown";
-                        const char *roomId = result["roomId"] | "Unknown";
+                        bulbInfo.moduleName = result["moduleName"] | "Unknown";
+                        bulbInfo.fwVersion = result["fwVersion"] | "Unknown";
+                        bulbInfo.mac = result["mac"] | "Unknown";
+                        bulbInfo.rssi = result["rssi"] | 0;
+                        bulbInfo.src = result["src"] | "Unknown";
+                        bulbInfo.homeId = result["homeId"] | "Unknown";
+                        bulbInfo.roomId = result["roomId"] | "Unknown";
 
-                        Serial.printf("  Model: %s\n", moduleName);
-                        Serial.printf("  Firmware: %s\n", fwVersion);
-                        Serial.printf("  MAC: %s\n", mac);
-                        Serial.printf("  RSSI: %d dBm\n", rssi);
-                        Serial.printf("  Source: %s\n", src);
-                        Serial.printf("  Home ID: %s\n", homeId);
-                        Serial.printf("  Room ID: %s\n", roomId);
+                        // Determine bulb class and features
+                        bulbInfo.bulbClass = determineBulbClass(bulbInfo.moduleName);
+                        bulbInfo.features = determineBulbFeatures(bulbInfo.bulbClass);
+                        bulbInfo.isValid = true;
+
+                        // Print information
+                        Serial.printf("  Model: %s\n", bulbInfo.moduleName.c_str());
+                        Serial.printf("  Firmware: %s\n", bulbInfo.fwVersion.c_str());
+                        Serial.printf("  MAC: %s\n", bulbInfo.mac.c_str());
+                        Serial.printf("  RSSI: %d dBm\n", bulbInfo.rssi);
+                        Serial.printf("  Source: %s\n", bulbInfo.src.c_str());
+                        Serial.printf("  Home ID: %s\n", bulbInfo.homeId.c_str());
+                        Serial.printf("  Room ID: %s\n", bulbInfo.roomId.c_str());
+                        
+                        // Print capabilities
+                        Serial.printf("  Bulb Type: ");
+                        switch (bulbInfo.bulbClass) {
+                            case BulbClass::RGB: Serial.println("RGB"); break;
+                            case BulbClass::RGBW: Serial.println("RGBW"); break;
+                            case BulbClass::TW: Serial.println("Tunable White"); break;
+                            case BulbClass::DW: Serial.println("Dimmable White"); break;
+                            case BulbClass::SOCKET: Serial.println("Smart Socket"); break;
+                            case BulbClass::FAN: Serial.println("Fan Light"); break;
+                            default: Serial.println("Unknown"); break;
+                        }
+                        
+                        Serial.printf("  Features: ");
+                        if (bulbInfo.features.brightness) Serial.print("Brightness ");
+                        if (bulbInfo.features.color) Serial.print("Color ");
+                        if (bulbInfo.features.color_tmp) Serial.print("ColorTemp ");
+                        if (bulbInfo.features.effect) Serial.print("Effects ");
+                        if (bulbInfo.features.fan) Serial.print("Fan ");
+                        Serial.println();
+                        
+                        if (bulbInfo.features.color_tmp) {
+                            Serial.printf("  Kelvin Range: %d - %d K\n", 
+                                         bulbInfo.features.kelvin_range.min, 
+                                         bulbInfo.features.kelvin_range.max);
+                        }
 
                         // Only print full response if it's reasonably sized
                         if (strlen(response) < 400)
@@ -301,12 +430,14 @@ void getSystemConfig(IPAddress deviceIP)
                     {
                         Serial.println("  Response doesn't contain 'result' field");
                         Serial.printf("  Raw response: %s\n", response);
+                        bulbInfo.errorMessage = "Invalid response format";
                         configReceived = true; // Still count as received
                     }
                 }
                 else
                 {
                     Serial.printf("  Failed to parse JSON response: %s\n", error.c_str());
+                    bulbInfo.errorMessage = "JSON parse error: " + String(error.c_str());
                     // Only print response if it's not too large
                     if (strlen(response) < 1024)
                     {
@@ -330,7 +461,9 @@ void getSystemConfig(IPAddress deviceIP)
     {
         Serial.println("  System Configuration: Timeout - no response received");
         Serial.printf("  Failed to get system config after %d attempts\n", CONFIG_ATTEMPTS);
+        bulbInfo.errorMessage = "Timeout - no response";
     }
 
     udp.stop();
+    return bulbInfo;
 }

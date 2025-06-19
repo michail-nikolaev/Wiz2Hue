@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <vector>
 #include "wiz2hue.h"
 
 const int RED_PERIOD = 2000;
@@ -37,7 +38,9 @@ void setup()
   wifi_connect(RED_PIN);
 
   delay(1000);
-  scanForWiz(broadcastIP());
+  std::vector<WizBulbInfo> discoveredBulbs = scanForWiz(broadcastIP());
+  
+  Serial.printf("Scan completed. Found %d Wiz bulbs with full capability information.\n", discoveredBulbs.size());
 
   setup_lights();
   hue_connect(YELLOW_PIN);
