@@ -379,40 +379,8 @@ WizBulbInfo getSystemConfig(IPAddress deviceIP)
                         bulbInfo.features = determineBulbFeatures(bulbInfo.bulbClass);
                         bulbInfo.isValid = true;
 
-                        // Print information
-                        Serial.printf("  Model: %s\n", bulbInfo.moduleName.c_str());
-                        Serial.printf("  Firmware: %s\n", bulbInfo.fwVersion.c_str());
-                        Serial.printf("  MAC: %s\n", bulbInfo.mac.c_str());
-                        Serial.printf("  RSSI: %d dBm\n", bulbInfo.rssi);
-                        Serial.printf("  Source: %s\n", bulbInfo.src.c_str());
-                        Serial.printf("  Home ID: %s\n", bulbInfo.homeId.c_str());
-                        Serial.printf("  Room ID: %s\n", bulbInfo.roomId.c_str());
-                        
-                        // Print capabilities
-                        Serial.printf("  Bulb Type: ");
-                        switch (bulbInfo.bulbClass) {
-                            case BulbClass::RGB: Serial.println("RGB"); break;
-                            case BulbClass::RGBW: Serial.println("RGBW"); break;
-                            case BulbClass::TW: Serial.println("Tunable White"); break;
-                            case BulbClass::DW: Serial.println("Dimmable White"); break;
-                            case BulbClass::SOCKET: Serial.println("Smart Socket"); break;
-                            case BulbClass::FAN: Serial.println("Fan Light"); break;
-                            default: Serial.println("Unknown"); break;
-                        }
-                        
-                        Serial.printf("  Features: ");
-                        if (bulbInfo.features.brightness) Serial.print("Brightness ");
-                        if (bulbInfo.features.color) Serial.print("Color ");
-                        if (bulbInfo.features.color_tmp) Serial.print("ColorTemp ");
-                        if (bulbInfo.features.effect) Serial.print("Effects ");
-                        if (bulbInfo.features.fan) Serial.print("Fan ");
-                        Serial.println();
-                        
-                        if (bulbInfo.features.color_tmp) {
-                            Serial.printf("  Kelvin Range: %d - %d K\n", 
-                                         bulbInfo.features.kelvin_range.min, 
-                                         bulbInfo.features.kelvin_range.max);
-                        }
+                        // Print information as JSON
+                        Serial.printf("%s\n", wizBulbInfoToJson(bulbInfo).c_str());
 
                         // Only print full response if it's reasonably sized
                         if (strlen(response) < 400)
@@ -465,5 +433,467 @@ WizBulbInfo getSystemConfig(IPAddress deviceIP)
     }
 
     udp.stop();
+    return bulbInfo;
+}
+
+WizBulbState getBulbState(IPAddress deviceIP)
+{
+    WizBulbState bulbState;
+    WiFiUDP udp;
+
+    if (!udp.begin(0))
+    {
+        Serial.println("Failed to start UDP for bulb state request");
+        bulbState.errorMessage = "Failed to start UDP";
+        return bulbState;
+    }
+
+    // State request - getPilot command
+    String stateMessage = "{\"method\":\"getPilot\",\"params\":{}}";
+    const int STATE_ATTEMPTS = 2;
+    const int STATE_RETRY_DELAY = 300;
+
+    bool stateReceived = false;
+
+    for (int attempt = 1; attempt <= STATE_ATTEMPTS && !stateReceived; attempt++)
+    {
+        if (attempt > 1)
+        {
+            Serial.printf("  Retrying state request (attempt %d/%d)...\n", attempt, STATE_ATTEMPTS);
+            delay(STATE_RETRY_DELAY);
+        }
+
+        // Send request to specific device
+        udp.beginPacket(deviceIP, WIZ_PORT);
+        udp.print(stateMessage);
+        udp.endPacket();
+
+        unsigned long startTime = millis();
+
+        // Wait for response
+        while (millis() - startTime < (RESPONSE_TIMEOUT / STATE_ATTEMPTS))
+        {
+            int packetSize = udp.parsePacket();
+
+            if (packetSize)
+            {
+                const int MAX_RESPONSE_SIZE = 512;
+                char response[MAX_RESPONSE_SIZE];
+                int len = udp.read(response, sizeof(response) - 1);
+                if (len >= MAX_RESPONSE_SIZE - 1)
+                {
+                    Serial.println("  Warning: State response truncated");
+                }
+                response[len] = '\0';
+
+                JsonDocument doc;
+                DeserializationError error = deserializeJson(doc, response);
+
+                if (!error)
+                {
+                    if (doc["result"].is<JsonObject>())
+                    {
+                        JsonObject result = doc["result"];
+
+                        // Extract state information
+                        bulbState.state = result["state"] | false;
+                        bulbState.dimming = result["dimming"] | -1;
+                        
+                        // Color values
+                        bulbState.r = result["r"] | -1;
+                        bulbState.g = result["g"] | -1;
+                        bulbState.b = result["b"] | -1;
+                        bulbState.c = result["c"] | -1;
+                        bulbState.w = result["w"] | -1;
+                        
+                        // Color temperature
+                        bulbState.temp = result["temp"] | -1;
+                        
+                        // Scene and effects
+                        bulbState.sceneId = result["sceneId"] | -1;
+                        bulbState.speed = result["speed"] | -1;
+                        
+                        // Fan speed (if present)
+                        bulbState.fanspd = result["fanspd"] | -1;
+
+                        bulbState.isValid = true;
+                        bulbState.lastUpdated = millis();
+
+                        Serial.printf(" Bulb State raw response: %s\n", response);
+
+                        stateReceived = true;
+                    }
+                    else
+                    {
+                        Serial.println("  State response doesn't contain 'result' field");
+                        bulbState.errorMessage = "Invalid state response format";
+                        stateReceived = true;
+                    }
+                }
+                else
+                {
+                    Serial.printf("  Failed to parse state JSON: %s\n", error.c_str());
+                    bulbState.errorMessage = "JSON parse error: " + String(error.c_str());
+                    stateReceived = true;
+                }
+
+                break;
+            }
+
+            delay(10);
+        }
+    }
+
+    if (!stateReceived)
+    {
+        Serial.println("  Bulb State: Timeout - no response received");
+        bulbState.errorMessage = "Timeout - no state response";
+    }
+
+    udp.stop();
+    return bulbState;
+}
+
+bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const Features& features)
+{
+    WiFiUDP udp;
+
+    if (!udp.begin(0))
+    {
+        Serial.println("Failed to start UDP for bulb control");
+        return false;
+    }
+
+    // Build setPilot command JSON with capability checking
+    JsonDocument doc;
+    doc["method"] = "setPilot";
+    JsonObject params = doc["params"].to<JsonObject>();
+    
+    // Basic state - always supported
+    params["state"] = state.state;
+    
+    // Brightness - only if supported and not unknown
+    if (features.brightness && state.dimming >= 0 && state.dimming <= 100) {
+        params["dimming"] = state.dimming;
+    }
+    
+    // Color information - only for bulbs that support color and values are not unknown
+    if (features.color) {
+        if (state.r >= 0 && state.r <= 255) params["r"] = state.r;
+        if (state.g >= 0 && state.g <= 255) params["g"] = state.g;
+        if (state.b >= 0 && state.b <= 255) params["b"] = state.b;
+        // Cold/warm white for RGBW bulbs
+        if (state.c >= 0 && state.c <= 255) params["c"] = state.c;
+        if (state.w >= 0 && state.w <= 255) params["w"] = state.w;
+    }
+    
+    // Color temperature - only if supported, not unknown, and within range
+    if (features.color_tmp && state.temp >= 0 && 
+        state.temp >= features.kelvin_range.min && state.temp <= features.kelvin_range.max) {
+        params["temp"] = state.temp;
+    }
+    
+    // Scene and effects - only if supported and not unknown
+    if (features.effect) {
+        if (state.sceneId >= 0) {
+            params["sceneId"] = state.sceneId;
+        }
+        if (state.speed >= 0 && state.speed <= 100) {
+            params["speed"] = state.speed;
+        }
+    }
+    
+    // Fan control - only if supported and not unknown
+    if (features.fan && state.fanspd >= 0 && state.fanspd <= 100) {
+        params["fanspd"] = state.fanspd;
+    }
+
+    // Serialize to string
+    String controlMessage;
+    serializeJson(doc, controlMessage);
+
+    const int CONTROL_ATTEMPTS = 2;
+    const int CONTROL_RETRY_DELAY = 300;
+    bool commandSent = false;
+
+    Serial.printf("Setting bulb state for %s\n", deviceIP.toString().c_str());
+    Serial.printf("  Requested state: %s\n", wizBulbStateToJson(state).c_str());
+    Serial.printf("  Control message: %s\n", controlMessage.c_str());
+
+    for (int attempt = 1; attempt <= CONTROL_ATTEMPTS && !commandSent; attempt++)
+    {
+        if (attempt > 1)
+        {
+            Serial.printf("  Retrying control command (attempt %d/%d)...\n", attempt, CONTROL_ATTEMPTS);
+            delay(CONTROL_RETRY_DELAY);
+        }
+
+        // Send control command
+        udp.beginPacket(deviceIP, WIZ_PORT);
+        udp.print(controlMessage);
+        udp.endPacket();
+
+        unsigned long startTime = millis();
+
+        // Wait for response (acknowledgment)
+        while (millis() - startTime < (RESPONSE_TIMEOUT / CONTROL_ATTEMPTS))
+        {
+            int packetSize = udp.parsePacket();
+
+            if (packetSize)
+            {
+                const int MAX_RESPONSE_SIZE = 256;
+                char response[MAX_RESPONSE_SIZE];
+                int len = udp.read(response, sizeof(response) - 1);
+                response[len] = '\0';
+
+                JsonDocument responseDoc;
+                DeserializationError error = deserializeJson(responseDoc, response);
+
+                if (!error)
+                {
+                    // Check if command was successful
+                    if (responseDoc["result"]["success"] == true || responseDoc["result"].is<JsonObject>())
+                    {
+                        Serial.printf("  Control command successful for %s\n", deviceIP.toString().c_str());
+                        commandSent = true;
+                    }
+                    else
+                    {
+                        Serial.printf("  Control command failed: %s\n", response);
+                    }
+                }
+                else
+                {
+                    Serial.printf("  Control response parse error: %s\n", error.c_str());
+                    // Treat as success if we got a response
+                    commandSent = true;
+                }
+
+                break;
+            }
+
+            delay(10);
+        }
+    }
+
+    if (!commandSent)
+    {
+        Serial.printf("  Control command timeout for %s\n", deviceIP.toString().c_str());
+    }
+
+    udp.stop();
+    return commandSent;
+}
+
+bool setBulbState(IPAddress deviceIP, const WizBulbState& state)
+{
+    // First get the bulb info to check capabilities
+    Serial.printf("Getting bulb capabilities for %s...\n", deviceIP.toString().c_str());
+    WizBulbInfo bulbInfo = getSystemConfig(deviceIP);
+    
+    if (!bulbInfo.isValid) {
+        Serial.printf("Failed to get bulb capabilities for %s: %s\n", 
+                     deviceIP.toString().c_str(), bulbInfo.errorMessage.c_str());
+        // Use default features (basic brightness only) as fallback
+        Features defaultFeatures;
+        defaultFeatures.brightness = true;
+        return setBulbStateInternal(deviceIP, state, defaultFeatures);
+    }
+    
+    return setBulbStateInternal(deviceIP, state, bulbInfo.features);
+}
+
+bool setBulbState(const WizBulbInfo& bulbInfo, const WizBulbState& state)
+{
+    IPAddress deviceIP;
+    if (!deviceIP.fromString(bulbInfo.ip))
+    {
+        Serial.printf("Invalid IP address in bulb info: %s\n", bulbInfo.ip.c_str());
+        return false;
+    }
+    
+    // Use the bulb's known capabilities directly
+    return setBulbStateInternal(deviceIP, state, bulbInfo.features);
+}
+
+WizBulbState getBulbState(const WizBulbInfo& bulbInfo)
+{
+    IPAddress deviceIP;
+    if (!deviceIP.fromString(bulbInfo.ip))
+    {
+        WizBulbState invalidState;
+        invalidState.errorMessage = "Invalid IP address: " + bulbInfo.ip;
+        Serial.printf("Invalid IP address in bulb info: %s\n", bulbInfo.ip.c_str());
+        return invalidState;
+    }
+    
+    return getBulbState(deviceIP);
+}
+
+String wizBulbStateToJson(const WizBulbState& state)
+{
+    JsonDocument doc;
+    
+    doc["state"] = state.state;
+    if (state.dimming >= 0) doc["dimming"] = state.dimming;
+    if (state.r >= 0) doc["r"] = state.r;
+    if (state.g >= 0) doc["g"] = state.g;
+    if (state.b >= 0) doc["b"] = state.b;
+    if (state.c >= 0) doc["c"] = state.c;
+    if (state.w >= 0) doc["w"] = state.w;
+    if (state.temp >= 0) doc["temp"] = state.temp;
+    if (state.sceneId >= 0) doc["sceneId"] = state.sceneId;
+    if (state.speed >= 0) doc["speed"] = state.speed;
+    if (state.fanspd >= 0) doc["fanspd"] = state.fanspd;
+    
+    doc["isValid"] = state.isValid;
+    if (!state.errorMessage.isEmpty()) doc["errorMessage"] = state.errorMessage;
+    if (state.lastUpdated > 0) doc["lastUpdated"] = state.lastUpdated;
+    
+    String json;
+    serializeJson(doc, json);
+    return json;
+}
+
+String bulbClassToString(BulbClass bulbClass)
+{
+    switch (bulbClass) {
+        case BulbClass::RGB: return "RGB";
+        case BulbClass::RGBW: return "RGBW";
+        case BulbClass::TW: return "TW";
+        case BulbClass::DW: return "DW";
+        case BulbClass::SOCKET: return "SOCKET";
+        case BulbClass::FAN: return "FAN";
+        default: return "UNKNOWN";
+    }
+}
+
+BulbClass bulbClassFromString(const String& str)
+{
+    if (str == "RGB") return BulbClass::RGB;
+    if (str == "RGBW") return BulbClass::RGBW;
+    if (str == "TW") return BulbClass::TW;
+    if (str == "DW") return BulbClass::DW;
+    if (str == "SOCKET") return BulbClass::SOCKET;
+    if (str == "FAN") return BulbClass::FAN;
+    return BulbClass::UNKNOWN;
+}
+
+String wizBulbInfoToJson(const WizBulbInfo& bulbInfo)
+{
+    JsonDocument doc;
+    
+    // Device identification
+    doc["ip"] = bulbInfo.ip;
+    doc["mac"] = bulbInfo.mac;
+    doc["moduleName"] = bulbInfo.moduleName;
+    doc["fwVersion"] = bulbInfo.fwVersion;
+    
+    // Network info
+    doc["rssi"] = bulbInfo.rssi;
+    doc["homeId"] = bulbInfo.homeId;
+    doc["roomId"] = bulbInfo.roomId;
+    doc["src"] = bulbInfo.src;
+    
+    // Capabilities
+    doc["bulbClass"] = bulbClassToString(bulbInfo.bulbClass);
+    
+    JsonObject features = doc["features"].to<JsonObject>();
+    features["brightness"] = bulbInfo.features.brightness;
+    features["color"] = bulbInfo.features.color;
+    features["color_tmp"] = bulbInfo.features.color_tmp;
+    features["effect"] = bulbInfo.features.effect;
+    features["fan"] = bulbInfo.features.fan;
+    
+    JsonObject kelvinRange = features["kelvin_range"].to<JsonObject>();
+    kelvinRange["min"] = bulbInfo.features.kelvin_range.min;
+    kelvinRange["max"] = bulbInfo.features.kelvin_range.max;
+    
+    // Additional info
+    doc["isValid"] = bulbInfo.isValid;
+    if (!bulbInfo.errorMessage.isEmpty()) doc["errorMessage"] = bulbInfo.errorMessage;
+    
+    String json;
+    serializeJson(doc, json);
+    return json;
+}
+
+WizBulbState wizBulbStateFromJson(const String& json)
+{
+    WizBulbState state;
+    JsonDocument doc;
+    
+    DeserializationError error = deserializeJson(doc, json);
+    if (error) {
+        state.errorMessage = "JSON parse error: " + String(error.c_str());
+        return state;
+    }
+    
+    state.state = doc["state"] | false;
+    state.dimming = doc["dimming"] | -1;
+    state.r = doc["r"] | -1;
+    state.g = doc["g"] | -1;
+    state.b = doc["b"] | -1;
+    state.c = doc["c"] | -1;
+    state.w = doc["w"] | -1;
+    state.temp = doc["temp"] | -1;
+    state.sceneId = doc["sceneId"] | -1;
+    state.speed = doc["speed"] | -1;
+    state.fanspd = doc["fanspd"] | -1;
+    
+    state.isValid = doc["isValid"] | false;
+    state.errorMessage = doc["errorMessage"] | "";
+    state.lastUpdated = doc["lastUpdated"] | 0;
+    
+    return state;
+}
+
+WizBulbInfo wizBulbInfoFromJson(const String& json)
+{
+    WizBulbInfo bulbInfo;
+    JsonDocument doc;
+    
+    DeserializationError error = deserializeJson(doc, json);
+    if (error) {
+        bulbInfo.errorMessage = "JSON parse error: " + String(error.c_str());
+        return bulbInfo;
+    }
+    
+    // Device identification
+    bulbInfo.ip = doc["ip"] | "";
+    bulbInfo.mac = doc["mac"] | "";
+    bulbInfo.moduleName = doc["moduleName"] | "";
+    bulbInfo.fwVersion = doc["fwVersion"] | "";
+    
+    // Network info
+    bulbInfo.rssi = doc["rssi"] | 0;
+    bulbInfo.homeId = doc["homeId"] | "";
+    bulbInfo.roomId = doc["roomId"] | "";
+    bulbInfo.src = doc["src"] | "";
+    
+    // Capabilities
+    String bulbClassStr = doc["bulbClass"] | "UNKNOWN";
+    bulbInfo.bulbClass = bulbClassFromString(bulbClassStr);
+    
+    if (doc["features"].is<JsonObject>()) {
+        JsonObject features = doc["features"];
+        bulbInfo.features.brightness = features["brightness"] | false;
+        bulbInfo.features.color = features["color"] | false;
+        bulbInfo.features.color_tmp = features["color_tmp"] | false;
+        bulbInfo.features.effect = features["effect"] | false;
+        bulbInfo.features.fan = features["fan"] | false;
+        
+        if (features["kelvin_range"].is<JsonObject>()) {
+            JsonObject kelvinRange = features["kelvin_range"];
+            bulbInfo.features.kelvin_range.min = kelvinRange["min"] | 2200;
+            bulbInfo.features.kelvin_range.max = kelvinRange["max"] | 6500;
+        }
+    }
+    
+    // Additional info
+    bulbInfo.isValid = doc["isValid"] | false;
+    bulbInfo.errorMessage = doc["errorMessage"] | "";
+    
     return bulbInfo;
 }
