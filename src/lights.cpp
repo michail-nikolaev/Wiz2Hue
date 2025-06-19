@@ -98,10 +98,9 @@ void zigbee_check_for_reset(int button)
       delay(50);
       if ((millis() - startTime) > 3000)
       {
-        // If key pressed for more than 3secs, factory reset Zigbee and reboot
-        Serial.println("Resetting Zigbee to factory and rebooting in 1s.");
-        delay(1000);
-        Zigbee.factoryReset();
+        // If key pressed for more than 3secs, perform unified system reset
+        Serial.println("Button held for 3+ seconds - performing full system reset");
+        resetSystem();
       }
     }
   }

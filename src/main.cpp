@@ -37,10 +37,15 @@ void setup()
 
   wifi_connect(RED_PIN);
 
+  // Initialize filesystem
+  if (!initFileSystem()) {
+    Serial.println("Failed to initialize filesystem - continuing without caching");
+  }
+
   delay(1000);
-  std::vector<WizBulbInfo> discoveredBulbs = scanForWiz(broadcastIP());
+  std::vector<WizBulbInfo> discoveredBulbs = discoverOrLoadLights(broadcastIP());
   
-  Serial.printf("Scan completed. Found %d Wiz bulbs with full capability information.\n", discoveredBulbs.size());
+  Serial.printf("Light discovery completed. Found %d Wiz bulbs with full capability information.\n", discoveredBulbs.size());
   
   // Read and print current state of each discovered bulb
   if (discoveredBulbs.size() > 0) {

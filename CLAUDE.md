@@ -34,17 +34,25 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 
 ### State Management Pattern
 
-1. **Discovery**: `scanForWiz()` returns vector of `WizBulbInfo` with full capabilities
-2. **State Reading**: `getBulbState()` queries current device state via UDP "getPilot"
-3. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters
-4. **JSON Debug**: All operations output structured JSON for debugging
+1. **Discovery**: `discoverOrLoadLights()` tries cache first, falls back to network scan
+2. **Persistent Storage**: Discovered lights cached in `/lights.json` on LittleFS
+3. **State Reading**: `getBulbState()` queries current device state via UDP "getPilot"
+4. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters
+5. **JSON Debug**: All operations output structured JSON for debugging
+
+### File System Operations
+
+- **Cache Management**: Lights stored in `/lights.json` for fast startup
+- **Smart Discovery**: Uses cached lights if available, network discovery as fallback
+- **Unified Reset**: `resetSystem()` clears both LittleFS cache and Zigbee network
 
 ## Hardware Configuration
 
 **Target**: Seeed XIAO ESP32-C6 (board: `seeed_xiao_esp32c6`)
 **Framework**: Arduino ESP32 
 **Platform**: Custom ESP32 platform with Zigbee support
-**Partition**: Uses `zigbee.csv` partition table (build flag: `-DZIGBEE_MODE_ED`)
+**Partition**: Uses `zigbee_spiffs.csv` partition table (build flag: `-DZIGBEE_MODE_ED`)
+**Filesystem**: LittleFS for persistent storage (uses "spiffs" partition name for Arduino compatibility)
 
 **Pin Assignments:**
 - D0: Red LED indicator
@@ -57,6 +65,7 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 
 **Core Libraries:**
 - `bblanchon/ArduinoJson@^7.0.0`: JSON parsing and generation
+- ESP32 Arduino LittleFS: Built-in filesystem for persistent storage
 - ESP32 Zigbee SDK (via managed components)
 - ESP WiFi/UDP stack
 
@@ -77,5 +86,16 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Network Settings**: Configure WiFi credentials in `src/secrets.h` (gitignored)
 **Zigbee Mode**: Currently configured as End Device (`-DZIGBEE_MODE_ED`)
 **Serial Monitor**: 115200 baud for debug output and state monitoring
+**File System**: LittleFS mounted automatically, uses "spiffs" partition for Arduino compatibility
+**Reset Behavior**: 3+ second button hold clears both filesystem cache and Zigbee network
 
-The system performs automatic WiZ discovery on startup, reads all device states, and outputs comprehensive JSON logs for monitoring and debugging.plesa
+## Partition Table (`zigbee_spiffs.csv`)
+
+**Memory Layout** (ESP32-C6 4MB Flash):
+- **Application**: 1.6MB (main firmware)
+- **LittleFS**: 896KB (persistent storage in "spiffs" partition)
+- **Zigbee Storage**: 20KB (network config + factory data)
+- **Core Dump**: 64KB (crash debugging)
+- **System**: 32KB (NVS + PHY calibration)
+
+The system performs automatic WiZ discovery with intelligent caching - uses stored lights for fast startup, network discovery as fallback, and outputs comprehensive JSON logs for monitoring and debugging.

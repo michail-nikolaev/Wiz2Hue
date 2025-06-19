@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 #include <vector>
+#include <LittleFS.h>
 
 const int RED_PIN = D0;
 const int BLUE_PIN = D1;
@@ -112,5 +113,14 @@ String wizBulbStateToJson(const WizBulbState& state);
 String wizBulbInfoToJson(const WizBulbInfo& bulbInfo);
 WizBulbState wizBulbStateFromJson(const String& json);
 WizBulbInfo wizBulbInfoFromJson(const String& json);
+
+// File management functions
+bool initFileSystem();
+std::vector<WizBulbInfo> loadLightsFromFile();
+bool saveLightsToFile(const std::vector<WizBulbInfo>& bulbs);
+std::vector<WizBulbInfo> discoverOrLoadLights(IPAddress broadcastIP);
+
+// Reset functions
+void resetSystem();
 
 #endif
