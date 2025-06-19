@@ -36,6 +36,9 @@ void setup()
 
   wifi_connect(RED_PIN);
 
+  delay(1000);
+  scanForWiz(broadcastIP());
+
   setup_lights();
   hue_connect(YELLOW_PIN);
   Serial.println();

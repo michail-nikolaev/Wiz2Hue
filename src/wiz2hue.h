@@ -15,10 +15,12 @@ IPAddress broadcastIP();
 void setup_lights();
 void hue_connect(int pin_to_blink);
 void zigbee_check_for_reset(int button);
+void hue_reset();
 
 void ledDigital(int* left, int period, int pin, int sleep);
 void ledAnalog(int* left, int period, int pin, int sleep);
 
-void hue_reset();
+void scanForWiz(IPAddress broadcastIP);
+void getSystemConfig(IPAddress deviceIP);
 
 #endif
