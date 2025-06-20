@@ -55,8 +55,9 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 5. **Initial State Sync**: Each ZigbeeWizLight reads actual WiZ bulb state on startup
 6. **State Reading**: `getBulbState()` queries current device state via UDP "getPilot"
 7. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters
-8. **Rate Limited Updates**: Individual 100ms rate limiting per light with 10-second periodic refresh
-9. **JSON Debug**: All operations output structured JSON for debugging
+8. **Rate Limited Updates**: Individual 100ms rate limiting per light with 10-second periodic refresh  
+9. **Smart Color Handling**: Detects RGB vs temperature parameter changes and sends only relevant commands
+10. **JSON Debug**: All operations output structured JSON for debugging
 
 ### File System Operations
 
@@ -99,7 +100,7 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Capability Filtering**: Only sends supported parameters to prevent device errors (e.g., no RGB commands to white-only bulbs)
 **State Defaults**: Use -1 for unknown/unset values throughout `WizBulbState` structure
 **JSON Output**: All debug information uses structured JSON format for parsing and analysis
-**Error Handling**: Comprehensive error messages with retry logic for network operations
+**Error Handling**: Comprehensive error messages with retry logic for network operations (20 attempts for system config)
 **Reset System**: Visual feedback with fast LED blinking (100ms intervals) during button hold
 **Filesystem Sync**: Explicit LittleFS flush operations prevent data loss during resets
 
@@ -110,15 +111,22 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Individual Rate Limiting**: Each ZigbeeWizLight has independent 100ms rate limiting to prevent WiZ overload
 **State Synchronization**: On startup, each light reads the actual WiZ bulb state for accurate initial values
 **Capability Mapping**: WiZ bulb types automatically map to appropriate Zigbee light types:
-- RGB → ESP_ZB_HUE_LIGHT_TYPE_COLOR
-- RGBW → ESP_ZB_HUE_LIGHT_TYPE_EXTENDED_COLOR
+- RGB → ESP_ZB_HUE_LIGHT_TYPE_EXTENDED_COLOR (supports full color + tunable white)
 - TW → ESP_ZB_HUE_LIGHT_TYPE_TEMPERATURE
 - DW → ESP_ZB_HUE_LIGHT_TYPE_DIMMABLE (or ON_OFF if no brightness)
 - Socket/Fan → ESP_ZB_HUE_LIGHT_TYPE_ON_OFF
 
+**Smart Color Mode Handling**:
+- **Change Detection**: Monitors RGB vs temperature parameter changes using previous state comparison
+- **Mode Isolation**: RGB changes exclude temperature parameters, temperature changes exclude RGB parameters  
+- **Conflict Prevention**: Uses signed integers (int16_t) with -1 values to properly exclude parameters
+- **Fallback Logic**: When no specific change detected, prioritizes RGB if any color values present
+
+**WiZ Module Recognition**: Comprehensive support for WiZ module naming (ESP01/ESP14/ESP24/ESP25_SH/DH/LED_RGB/TW/DW)
 **Periodic Updates**: Every 10 seconds, last known state is resent to ensure bulbs stay synchronized
-**Optimized Callbacks**: Minimal Serial output in callbacks to reduce processing lag
+**Optimized Callbacks**: Minimal Serial output in callbacks to reduce processing lag (optional debug mode available)
 **Color Temperature**: Automatic conversion between Zigbee mireds and WiZ Kelvin with range clamping
+**Test Mode Enhancement**: During Zigbee connection, cycles through random colors and temperatures for visual feedback
 
 ## Configuration
 

@@ -14,10 +14,9 @@ const int YELLOW_PIN = D3;
 // Bulb capability and feature structures
 enum class BulbClass {
     UNKNOWN,
-    RGB,        // Full color RGB
-    RGBW,       // RGB + White
-    TW,         // Tunable White (warm/cool)
-    DW,         // Dimmable White only
+    RGB,        // Full color RGB + Tunable White (SHRGB modules)
+    TW,         // Tunable White only (SHTW modules)
+    DW,         // Dimmable White only (SHDW modules)
     SOCKET,     // Smart socket (on/off only)
     FAN         // Fan with light
 };

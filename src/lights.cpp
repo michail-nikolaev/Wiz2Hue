@@ -26,11 +26,18 @@ private:
   
   // Current Hue light state
   bool currentState;
-  uint8_t currentRed;
-  uint8_t currentGreen; 
-  uint8_t currentBlue;
+  int16_t currentRed;      // Using signed int to allow -1
+  int16_t currentGreen; 
+  int16_t currentBlue;
   uint8_t currentLevel;
-  uint16_t currentTemperature;
+  int16_t currentTemperature; // Using signed int to allow -1
+  
+  // Previous state for change detection
+  uint8_t prevRed;
+  uint8_t prevGreen;
+  uint8_t prevBlue;
+  uint16_t prevTemperature;
+  
   
   // Rate limiting
   unsigned long lastCommandTime;
@@ -43,8 +50,9 @@ private:
 public:
   ZigbeeWizLight(uint8_t ep, const WizBulbInfo& bulb, es_zb_hue_light_type_t zigbeeType) 
     : wizBulb(bulb), endpoint(ep), currentState(false), currentRed(0), currentGreen(0), 
-      currentBlue(0), currentLevel(0), currentTemperature(0), lastCommandTime(0), 
-      lastPeriodicUpdate(0), hasPendingUpdate(false) {
+      currentBlue(0), currentLevel(0), currentTemperature(0), prevRed(0), prevGreen(0),
+      prevBlue(0), prevTemperature(0), lastCommandTime(0), lastPeriodicUpdate(0), 
+      hasPendingUpdate(false) {
     
     // Read actual WiZ bulb state and use as initial state
     WizBulbState actualState = getBulbState(wizBulb);
@@ -62,11 +70,15 @@ public:
         currentRed = actualState.r;
         currentGreen = actualState.g;
         currentBlue = actualState.b;
+        prevRed = currentRed;
+        prevGreen = currentGreen;
+        prevBlue = currentBlue;
       }
       
       if (actualState.temp >= 0) {
         // Convert Kelvin to mireds
         currentTemperature = 1000000 / actualState.temp;
+        prevTemperature = currentTemperature;
       }
     } else {
       Serial.printf("Failed to read initial state for bulb %s: %s\n", 
@@ -103,28 +115,42 @@ public:
   }
   
   void onLightChangeCallback(bool state, uint8_t ep, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature) {
+    // Optional debug output - uncomment to enable detailed logging
+    Serial.printf("onLightChange EP:%d State:%s RGB:(%d,%d,%d) Level:%d Temp:%d mireds\n", 
+                  ep, state ? "ON" : "OFF", red, green, blue, level, temperature);
+    
+    // Detect what changed to send only relevant parameters
+    bool rgbChanged = (red != prevRed || green != prevGreen || blue != prevBlue);
+    bool tempChanged = (temperature != prevTemperature);
+    
+    // Update previous state for next comparison
+    prevRed = red;
+    prevGreen = green;
+    prevBlue = blue;
+    prevTemperature = temperature;
+    
     // Update current state
     currentState = state;
-    currentRed = red;
-    currentGreen = green;
-    currentBlue = blue;
     currentLevel = level;
-    currentTemperature = temperature;
+    
+    // Smart parameter selection: prioritize the parameter group that changed
+    if (rgbChanged && wizBulb.features.color) {
+      // RGB changed - use RGB mode, reset temperature
+      currentRed = red;
+      currentGreen = green;
+      currentBlue = blue;
+      currentTemperature = -1; // Reset temperature to avoid conflicts
+      Serial.printf("  → RGB mode: RGB(%d,%d,%d), temp set to -1\n", red, green, blue);
+    } else if (tempChanged && wizBulb.features.color_tmp) {
+      // Temperature changed - use temperature mode, reset RGB
+      currentTemperature = temperature;
+      currentRed = -1;   // Reset RGB to avoid conflicts
+      currentGreen = -1;
+      currentBlue = -1;
+      Serial.printf("  → Temperature mode: %d mireds, RGB set to -1\n", temperature);
+    }
     
     hasPendingUpdate = true;
-    
-    // Update LED indicators for visual feedback
-    if (!state) {
-      analogWrite(BLUE_PIN, 0);
-      analogWrite(RED_PIN, 0);
-      analogWrite(GREEN_PIN, 0);
-      digitalWrite(YELLOW_PIN, 0);
-    } else {
-      analogWrite(BLUE_PIN, blue);
-      analogWrite(RED_PIN, red);
-      analogWrite(GREEN_PIN, green);
-      digitalWrite(YELLOW_PIN, 1);
-    }
   }
   
   void onIdentifyCallback(uint16_t time) {
@@ -154,18 +180,23 @@ private:
     WizBulbState wizState;
     wizState.state = currentState;
     
+    Serial.printf("  sendToWizBulb: current RGB(%d,%d,%d), temp %d\n", 
+                  currentRed, currentGreen, currentBlue, currentTemperature);
+    
     if (currentState && wizBulb.features.brightness) {
       wizState.dimming = map(currentLevel, 0, 255, 0, 100);
     }
     
-    if (currentState && wizBulb.features.color) {
+    // Smart parameter sending: check what mode we're in based on values
+    if (currentState && wizBulb.features.color && 
+        currentRed >= 0 && currentGreen >= 0 && currentBlue >= 0) {
+      // RGB mode - send RGB values, exclude temperature
       wizState.r = currentRed;
       wizState.g = currentGreen;
-      wizState.b = currentBlue;
-    }
-    
-    if (currentState && wizBulb.features.color_tmp && currentTemperature > 0) {
-      // Convert mireds to Kelvin
+      wizState.b = currentBlue;      
+      Serial.printf("  → Sending RGB mode: RGB(%d,%d,%d), temp excluded\n", (int)currentRed, (int)currentGreen, (int)currentBlue);
+    } else if (currentState && wizBulb.features.color_tmp && currentTemperature > 0) {
+      // Temperature mode - send temperature, exclude RGB
       int kelvin = 1000000 / currentTemperature;
       // Clamp to bulb's supported range
       if (kelvin < wizBulb.features.kelvin_range.min) {
@@ -173,7 +204,8 @@ private:
       } else if (kelvin > wizBulb.features.kelvin_range.max) {
         kelvin = wizBulb.features.kelvin_range.max;
       }
-      wizState.temp = kelvin;
+      wizState.temp = kelvin;      
+      Serial.printf("  → Sending temp mode: %dK, RGB excluded\n", kelvin);
     }
     
     setBulbState(wizBulb, wizState);
@@ -182,11 +214,9 @@ private:
   String getHueModelName(const WizBulbInfo& bulb) {
     switch (bulb.bulbClass) {
       case BulbClass::RGB:
-        return "WizHue(LCT015)";
-      case BulbClass::RGBW:
-        return "WizHue(LCA001)";
+        return "WizHue(LCA001)";  // Extended color light (RGB + tunable white)
       case BulbClass::TW:
-        return "WizHue(LWO003)";
+        return "WizHue(LWO003)";  // Color temperature light
       case BulbClass::DW:
         return bulb.features.brightness ? "WizHue(LTA005)" : "WizHue(OnOff)";
       case BulbClass::SOCKET:
@@ -244,14 +274,30 @@ void hue_connect(int pin_to_blink, int button, const std::vector<WizBulbInfo>& b
         if (bulbs[i].features.brightness) {
           // Random brightness 10-100%
           newState.dimming = random(10, 101);
-          Serial.printf("Setting bulb %s brightness to %d%%\n", bulbs[i].ip.c_str(), newState.dimming);
+          Serial.printf("Setting bulb %s brightness to %d%%", bulbs[i].ip.c_str(), newState.dimming);
         } else {
           // Toggle on/off for bulbs without brightness support
           static bool toggleState = true;
           newState.state = toggleState;
           toggleState = !toggleState;
-          Serial.printf("Toggling bulb %s %s\n", bulbs[i].ip.c_str(), newState.state ? "ON" : "OFF");
+          Serial.printf("Toggling bulb %s %s", bulbs[i].ip.c_str(), newState.state ? "ON" : "OFF");
         }
+        
+        // Set random color if supported
+        if (bulbs[i].features.color) {
+          newState.r = random(0, 256);
+          newState.g = random(0, 256);
+          newState.b = random(0, 256);
+          Serial.printf(", RGB(%d,%d,%d)", newState.r, newState.g, newState.b);
+        }
+        
+        // Set random color temperature if supported (and not setting color)
+        if (bulbs[i].features.color_tmp && !bulbs[i].features.color) {
+          newState.temp = random(bulbs[i].features.kelvin_range.min, bulbs[i].features.kelvin_range.max + 1);
+          Serial.printf(", temp %dK", newState.temp);
+        }
+        
+        Serial.println();
         
         setBulbState(bulbs[i], newState);
         delay(100); // Small delay between bulb commands
@@ -277,8 +323,7 @@ std::vector<WizBulbInfo> sortBulbsByMac(const std::vector<WizBulbInfo>& bulbs) {
 es_zb_hue_light_type_t mapBulbToZigbeeType(const WizBulbInfo& bulb) {
   switch (bulb.bulbClass) {
     case BulbClass::RGB:
-      return ESP_ZB_HUE_LIGHT_TYPE_COLOR;
-    case BulbClass::RGBW:
+      // RGB bulbs support full color + tunable white - use extended color
       return ESP_ZB_HUE_LIGHT_TYPE_EXTENDED_COLOR;
     case BulbClass::TW:
       return ESP_ZB_HUE_LIGHT_TYPE_TEMPERATURE;

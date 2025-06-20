@@ -220,32 +220,36 @@ BulbClass determineBulbClass(const String& moduleName) {
     String moduleNameUpper = moduleName;
     moduleNameUpper.toUpperCase();
     
-    // Based on pywizlight module name parsing
-    if (moduleNameUpper.indexOf("ESP01_SHRGB") >= 0 || 
-        moduleNameUpper.indexOf("ESP56_SHRGB") >= 0 ||
-        moduleNameUpper.indexOf("SHRGB") >= 0) {
-        return BulbClass::RGB;
-    }
-    else if (moduleNameUpper.indexOf("ESP01_SHTW") >= 0 ||
-             moduleNameUpper.indexOf("ESP56_SHTW") >= 0 ||
-             moduleNameUpper.indexOf("SHTW") >= 0 ||
-             moduleNameUpper.indexOf("TW") >= 0) {
-        return BulbClass::TW;
-    }
-    else if (moduleNameUpper.indexOf("ESP01_SHDW") >= 0 ||
-             moduleNameUpper.indexOf("ESP56_SHDW") >= 0 ||
-             moduleNameUpper.indexOf("SHDW") >= 0 ||
-             moduleNameUpper.indexOf("DW") >= 0) {
-        return BulbClass::DW;
-    }
-    else if (moduleNameUpper.indexOf("SOCKET") >= 0) {
+    // Based on WiZ module naming: ESP##_[SH/DH/LED][RGB/TW/DW][#C]_##
+    // Where: ESP## = hardware platform, SH/DH/LED = form factor, RGB/TW/DW = capability
+    
+    // Special device types first
+    if (moduleNameUpper.indexOf("SOCKET") >= 0) {
         return BulbClass::SOCKET;
     }
     else if (moduleNameUpper.indexOf("FAN") >= 0) {
         return BulbClass::FAN;
     }
-    else if (moduleNameUpper.indexOf("RGBW") >= 0) {
-        return BulbClass::RGBW;
+    // RGB bulbs (Full color + tunable white + effects)
+    // Matches: ESP01_SHRGB1C_31, ESP01_SHRGB_03, ESP14_SHRGB1C_01, ESP24_SHRGB_01, etc.
+    else if (moduleNameUpper.indexOf("SHRGB") >= 0 || 
+             moduleNameUpper.indexOf("DHRGB") >= 0 || 
+             moduleNameUpper.indexOf("LEDRGB") >= 0) {
+        return BulbClass::RGB;
+    }
+    // Tunable White (CCT control + dimming, 2700K-6500K)
+    // Matches: ESP01_SHTW1C_31, etc.
+    else if (moduleNameUpper.indexOf("SHTW") >= 0 || 
+             moduleNameUpper.indexOf("DHTW") >= 0 || 
+             moduleNameUpper.indexOf("LEDTW") >= 0) {
+        return BulbClass::TW;
+    }
+    // Dimmable White (brightness only, some ~1800K filaments)
+    // Matches: ESP01_SHDW1_31, etc.
+    else if (moduleNameUpper.indexOf("SHDW") >= 0 || 
+             moduleNameUpper.indexOf("DHDW") >= 0 || 
+             moduleNameUpper.indexOf("LEDDW") >= 0) {
+        return BulbClass::DW;
     }
     
     return BulbClass::UNKNOWN;
@@ -256,44 +260,52 @@ Features determineBulbFeatures(BulbClass bulbClass) {
     
     switch (bulbClass) {
         case BulbClass::RGB:
+            // RGB bulbs: Full color + tunable white + brightness + effects
+            // Examples: ESP01_SHRGB1C_31, ESP01_SHRGB_03, ESP14_SHRGB1C_01, ESP24_SHRGB_01
             features.brightness = true;
             features.color = true;
+            features.color_tmp = true;  // RGB bulbs support full color AND tunable white
             features.effect = true;
-            features.kelvin_range = {2200, 6500};
+            features.kelvin_range = {2200, 6500}; // Full range based on documentation
             break;
             
-        case BulbClass::RGBW:
-            features.brightness = true;
-            features.color = true;
-            features.color_tmp = true;
-            features.effect = true;
-            features.kelvin_range = {2200, 6500};
-            break;
             
         case BulbClass::TW:
+            // Tunable White: CCT control + dimming only (2700K-6500K)
+            // Examples: ESP01_SHTW1C_31
             features.brightness = true;
             features.color_tmp = true;
-            features.kelvin_range = {2700, 6500};
+            features.kelvin_range = {2700, 6500}; // Standard tunable white range
             break;
             
         case BulbClass::DW:
+            // Dimmable White: brightness only, some ~1800K filaments
+            // Examples: ESP01_SHDW1_31
             features.brightness = true;
-            features.kelvin_range = {2700, 2700}; // Fixed warm white
+            // No color temperature control - fixed color
+            features.kelvin_range = {1800, 1800}; // Some filaments are ~1800K
             break;
             
         case BulbClass::FAN:
+            // Fan lights - assume similar to RGB but with fan control
             features.brightness = true;
+            features.color = true;
+            features.color_tmp = true;
+            features.effect = true;
             features.fan = true;
             features.kelvin_range = {2700, 6500};
             break;
             
         case BulbClass::SOCKET:
-            // Socket only supports on/off
+            // Smart plugs/sockets: on/off only (some have power monitoring)
+            // Examples: ESP25_SOCKET_01
+            // No lighting features - pure switch functionality
             break;
             
         default:
-            // Unknown - assume basic brightness
+            // Unknown modules - assume basic brightness only for safety
             features.brightness = true;
+            features.kelvin_range = {2700, 2700}; // Safe default
             break;
     }
     
@@ -316,7 +328,7 @@ WizBulbInfo getSystemConfig(IPAddress deviceIP)
 
     // System config request
     String configMessage = "{\"method\":\"getSystemConfig\",\"params\":{}}";
-    const int CONFIG_ATTEMPTS = 2;      // Number of attempts to get system config
+    const int CONFIG_ATTEMPTS = 20;     // Number of attempts to get system config
     const int CONFIG_RETRY_DELAY = 500; // Delay between retries
 
     bool configReceived = false;
@@ -614,7 +626,7 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
 
     // Serial.printf("Setting bulb state for %s\n", deviceIP.toString().c_str());
     // Serial.printf("  Requested state: %s\n", wizBulbStateToJson(state).c_str());
-    // Serial.printf("  Control message: %s\n", controlMessage.c_str());
+    Serial.printf("  Control message: %s\n", controlMessage.c_str());
 
     // Send control command - WiZ bulbs typically don't send acknowledgment responses to setPilot
     udp.beginPacket(deviceIP, WIZ_PORT);
@@ -706,7 +718,6 @@ String bulbClassToString(BulbClass bulbClass)
 {
     switch (bulbClass) {
         case BulbClass::RGB: return "RGB";
-        case BulbClass::RGBW: return "RGBW";
         case BulbClass::TW: return "TW";
         case BulbClass::DW: return "DW";
         case BulbClass::SOCKET: return "SOCKET";
@@ -718,7 +729,6 @@ String bulbClassToString(BulbClass bulbClass)
 BulbClass bulbClassFromString(const String& str)
 {
     if (str == "RGB") return BulbClass::RGB;
-    if (str == "RGBW") return BulbClass::RGBW;
     if (str == "TW") return BulbClass::TW;
     if (str == "DW") return BulbClass::DW;
     if (str == "SOCKET") return BulbClass::SOCKET;
