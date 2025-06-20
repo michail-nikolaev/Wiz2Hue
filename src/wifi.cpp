@@ -41,7 +41,7 @@ IPAddress wifi_connect(int pin_to_blink, int button)
 
   // Add timeout to prevent infinite loop
   unsigned long startTime = millis();
-  const unsigned long WIFI_TIMEOUT = 15000; // 15 seconds timeout
+  const unsigned long WIFI_TIMEOUT = 5000; // 15 seconds timeout
   int retryCount = 0;
   
   while (WiFi.status() != WL_CONNECTED)
@@ -58,7 +58,7 @@ IPAddress wifi_connect(int pin_to_blink, int button)
       retryCount++;
       Serial.printf("\nWiFi connection timeout (attempt %d), status: %d\n", retryCount, WiFi.status());
       
-      if (retryCount >= 3) {
+      if (retryCount >= 1) {
         Serial.println("Multiple WiFi failures - performing complete reset");
         ESP.restart();
       }

@@ -612,78 +612,24 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
     String controlMessage;
     serializeJson(doc, controlMessage);
 
-    const int CONTROL_ATTEMPTS = 2;
-    const int CONTROL_RETRY_DELAY = 300;
-    bool commandSent = false;
-
     Serial.printf("Setting bulb state for %s\n", deviceIP.toString().c_str());
     Serial.printf("  Requested state: %s\n", wizBulbStateToJson(state).c_str());
     Serial.printf("  Control message: %s\n", controlMessage.c_str());
 
-    for (int attempt = 1; attempt <= CONTROL_ATTEMPTS && !commandSent; attempt++)
-    {
-        if (attempt > 1)
-        {
-            Serial.printf("  Retrying control command (attempt %d/%d)...\n", attempt, CONTROL_ATTEMPTS);
-            delay(CONTROL_RETRY_DELAY);
-        }
-
-        // Send control command
-        udp.beginPacket(deviceIP, WIZ_PORT);
-        udp.print(controlMessage);
-        udp.endPacket();
-
-        unsigned long startTime = millis();
-
-        // Wait for response (acknowledgment)
-        while (millis() - startTime < (RESPONSE_TIMEOUT / CONTROL_ATTEMPTS))
-        {
-            int packetSize = udp.parsePacket();
-
-            if (packetSize)
-            {
-                const int MAX_RESPONSE_SIZE = 256;
-                char response[MAX_RESPONSE_SIZE];
-                int len = udp.read(response, sizeof(response) - 1);
-                response[len] = '\0';
-
-                JsonDocument responseDoc;
-                DeserializationError error = deserializeJson(responseDoc, response);
-
-                if (!error)
-                {
-                    // Check if command was successful
-                    if (responseDoc["result"]["success"] == true || responseDoc["result"].is<JsonObject>())
-                    {
-                        Serial.printf("  Control command successful for %s\n", deviceIP.toString().c_str());
-                        commandSent = true;
-                    }
-                    else
-                    {
-                        Serial.printf("  Control command failed: %s\n", response);
-                    }
-                }
-                else
-                {
-                    Serial.printf("  Control response parse error: %s\n", error.c_str());
-                    // Treat as success if we got a response
-                    commandSent = true;
-                }
-
-                break;
-            }
-
-            delay(10);
-        }
-    }
-
-    if (!commandSent)
-    {
-        Serial.printf("  Control command timeout for %s\n", deviceIP.toString().c_str());
-    }
-
+    // Send control command - WiZ bulbs typically don't send acknowledgment responses to setPilot
+    udp.beginPacket(deviceIP, WIZ_PORT);
+    udp.print(controlMessage);
+    bool packetSent = udp.endPacket();
+    
     udp.stop();
-    return commandSent;
+    
+    if (packetSent) {
+        Serial.printf("  Control command sent to %s\n", deviceIP.toString().c_str());                        
+        return true;
+    } else {
+        Serial.printf("  Failed to send control command to %s\n", deviceIP.toString().c_str());
+        return false;
+    }
 }
 
 bool setBulbState(IPAddress deviceIP, const WizBulbState& state)

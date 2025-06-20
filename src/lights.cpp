@@ -32,12 +32,7 @@ void hue_connect(int pin_to_blink, int button, const std::vector<WizBulbInfo>& b
   
   // Test mode variables
   unsigned long lastTestTime = 0;
-  const unsigned long TEST_INTERVAL = 5000; // 5 seconds
-  bool testModeActive = bulbs.size() > 0; // Enable test mode if we have bulbs
-  
-  if (testModeActive) {
-    Serial.println("Test mode active: Will change bulb states every 5 seconds during Zigbee connection");
-  }
+  const unsigned long TEST_INTERVAL = 500;
   
   while (!Zigbee.connected())
   {
@@ -48,8 +43,7 @@ void hue_connect(int pin_to_blink, int button, const std::vector<WizBulbInfo>& b
     delay(100);
     checkForReset(button);
     
-    // Test mode: Change bulb states every 5 seconds
-    if (testModeActive && (millis() - lastTestTime >= TEST_INTERVAL)) {
+    if (millis() - lastTestTime >= TEST_INTERVAL) {
       Serial.println("\n=== Test Mode: Changing bulb states ===");
       
       for (size_t i = 0; i < bulbs.size(); i++) {
