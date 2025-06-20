@@ -12,11 +12,23 @@ IPAddress broadcastIP()
 
 IPAddress wifi_connect(int pin_to_blink, int button)
 {
+  // Comprehensive WiFi reset to handle post-upload state issues
+  Serial.println("Initializing WiFi...");
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+  WiFi.mode(WIFI_STA);
+  delay(100);
   WiFi.disconnect(true);
+  delay(100);
+  
   Serial.printf("\n******************************************************Connecting to %s\n", ssid);
 
   WiFi.begin(ssid, password);
 
+  // Add timeout to prevent infinite loop
+  unsigned long startTime = millis();
+  const unsigned long WIFI_TIMEOUT = 30000; // 30 seconds timeout
+  
   while (WiFi.status() != WL_CONNECTED)
   {
     digitalWrite(pin_to_blink, HIGH);
@@ -25,6 +37,15 @@ IPAddress wifi_connect(int pin_to_blink, int button)
     delay(100);
     Serial.print(".");
     checkForReset(button);
+    
+    // Check for timeout and retry connection
+    if (millis() - startTime > WIFI_TIMEOUT) {
+      Serial.println("\nWiFi connection timeout, retrying...");
+      WiFi.disconnect(true);
+      delay(1000);
+      WiFi.begin(ssid, password);
+      startTime = millis(); // Reset timeout counter
+    }
   }
 
   Serial.printf("\nWiFi connected\nIP address: %s, Broadcast: %s\n", WiFi.localIP().toString().c_str(), broadcastIP().toString().c_str());
