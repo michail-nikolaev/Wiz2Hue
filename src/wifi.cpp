@@ -10,7 +10,7 @@ IPAddress broadcastIP()
   return WiFi.calculateBroadcast(WiFi.localIP(), WiFi.subnetMask());
 }
 
-IPAddress wifi_connect(int pin_to_blink)
+IPAddress wifi_connect(int pin_to_blink, int button)
 {
   WiFi.disconnect(true);
   Serial.printf("\n******************************************************Connecting to %s\n", ssid);
@@ -24,6 +24,7 @@ IPAddress wifi_connect(int pin_to_blink)
     digitalWrite(pin_to_blink, LOW);
     delay(100);
     Serial.print(".");
+    checkForReset(button);
   }
 
   Serial.printf("\nWiFi connected\nIP address: %s, Broadcast: %s\n", WiFi.localIP().toString().c_str(), broadcastIP().toString().c_str());

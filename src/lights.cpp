@@ -13,7 +13,7 @@ static ZigbeeHueLight *zbDimmableLight = nullptr;
 static ZigbeeHueLight *zbColorOnOffLight = nullptr;
 static ZigbeeHueLight *zbColorTemperatureLight = nullptr;
 
-void hue_connect(int pin_to_blink)
+void hue_connect(int pin_to_blink, int button)
 {
   uint8_t phillips_hue_key[] = {0x81, 0x45, 0x86, 0x86, 0x5D, 0xC6, 0xC8, 0xB1, 0xC8, 0xCB, 0xC4, 0x2E, 0x5D, 0x65, 0xD3, 0xB9};
   Zigbee.setEnableJoiningToDistributed(true);
@@ -44,6 +44,7 @@ void hue_connect(int pin_to_blink)
     delay(100);
     digitalWrite(pin_to_blink, LOW);
     delay(100);
+    checkForReset(button);
   }
   digitalWrite(pin_to_blink, HIGH);
 }
@@ -85,26 +86,6 @@ void identify(uint16_t time)
   log_d("Identify called for %d seconds", time);
 }
 
-void zigbee_check_for_reset(int button)
-{
-  // Checking button for factory reset
-  if (digitalRead(button) == LOW)
-  { // Push button pressed
-    // Key debounce handling
-    delay(100);
-    int startTime = millis();
-    while (digitalRead(button) == LOW)
-    {
-      delay(50);
-      if ((millis() - startTime) > 3000)
-      {
-        // If key pressed for more than 3secs, perform unified system reset
-        Serial.println("Button held for 3+ seconds - performing full system reset");
-        resetSystem();
-      }
-    }
-  }
-}
 
 void hue_reset()
 {

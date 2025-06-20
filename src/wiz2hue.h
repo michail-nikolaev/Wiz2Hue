@@ -86,13 +86,16 @@ struct WizBulbInfo {
     String errorMessage;
 };
 
-IPAddress wifi_connect(int pin_to_blink);
+IPAddress wifi_connect(int pin_to_blink, int button);
 IPAddress broadcastIP();
 
 void setup_lights();
-void hue_connect(int pin_to_blink);
-void zigbee_check_for_reset(int button);
+void hue_connect(int pin_to_blink, int button);
 void hue_reset();
+
+// System reset functions
+void checkForReset(int button);
+void resetSystem();
 
 void ledDigital(int* left, int period, int pin, int sleep);
 void ledAnalog(int* left, int period, int pin, int sleep);
@@ -119,8 +122,6 @@ bool initFileSystem();
 std::vector<WizBulbInfo> loadLightsFromFile();
 bool saveLightsToFile(const std::vector<WizBulbInfo>& bulbs);
 std::vector<WizBulbInfo> discoverOrLoadLights(IPAddress broadcastIP);
-
-// Reset functions
-void resetSystem();
+void clearFileSystemCache();
 
 #endif

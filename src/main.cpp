@@ -35,7 +35,7 @@ void setup()
     digitalWrite(p, LOW);
   }
 
-  wifi_connect(RED_PIN);
+  wifi_connect(RED_PIN, button);
 
   // Initialize filesystem
   if (!initFileSystem()) {
@@ -70,10 +70,66 @@ void setup()
   }
 
   setup_lights();
-  hue_connect(YELLOW_PIN);
+  hue_connect(YELLOW_PIN, button);
   Serial.println();
 
   delay(500);
+  
+  // Check for reset button during setup
+  checkForReset(button);
+}
+
+void checkForReset(int button)
+{
+  // Checking button for factory reset
+  if (digitalRead(button) == LOW)
+  { // Push button pressed
+    // Key debounce handling
+    delay(100);
+    int startTime = millis();
+    bool ledState = false;
+    unsigned long lastBlink = millis();
+    const int BLINK_INTERVAL = 100; // Fast blink every 100ms
+    
+    while (digitalRead(button) == LOW)
+    {
+      // Fast blink built-in LED while button is held
+      if (millis() - lastBlink >= BLINK_INTERVAL) {
+        ledState = !ledState;
+        digitalWrite(LED_BUILTIN, ledState ? HIGH : LOW);
+        lastBlink = millis();
+      }
+      
+      delay(10); // Short delay to prevent excessive CPU usage
+      
+      if ((millis() - startTime) > 3000)
+      {
+        // If key pressed for more than 3secs, perform unified system reset
+        Serial.println("Button held for 3+ seconds - performing full system reset");
+        digitalWrite(LED_BUILTIN, LOW); // Turn off LED before reset
+        resetSystem();
+      }
+    }
+    
+    // Button released - turn off LED
+    digitalWrite(LED_BUILTIN, LOW);
+  }
+}
+
+void resetSystem()
+{
+    Serial.println("=== System Reset ===");
+    
+    // Clear LittleFS cache
+    clearFileSystemCache();
+    
+    // Reset Zigbee network
+    Serial.println("Resetting Zigbee network...");
+    hue_reset();
+    
+    Serial.println("System reset complete - device will restart");
+    delay(1000);
+    ESP.restart();
 }
 
 void loop()
@@ -81,5 +137,5 @@ void loop()
   ledDigital(&ledBuiltinLeft, LED_BUILTIN_PERIOD, LED_BUILTIN, SLEEP);
   delay(SLEEP);
 
-  zigbee_check_for_reset(button);
+  checkForReset(button);
 }
