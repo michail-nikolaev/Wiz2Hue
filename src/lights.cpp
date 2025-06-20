@@ -27,14 +27,6 @@ void hue_connect(int pin_to_blink, int button)
     ESP.restart();
   }
 
-  /*esp_zb_ieee_addr_t custom_mac = {0x34, 0x12, 0xED, 0xF2, 0xEF, 0xBE, 0xAD, 0xD1};
-  esp_err_t err = esp_zb_set_long_address(custom_mac);
-  if (err == ESP_OK) {
-      Serial.print("Successfully set custom long address.");
-  } else {
-      Serial.print("Failed to set custom long address/");
-  }*/
-
   digitalWrite(GREEN_PIN, HIGH);
   Serial.println("Connecting Zigbee to network");
   while (!Zigbee.connected())
@@ -49,7 +41,7 @@ void hue_connect(int pin_to_blink, int button)
   digitalWrite(pin_to_blink, HIGH);
 }
 
-void setLight(bool state, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature)
+void setLight(bool state, uint8_t endpoint, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature)
 {
   if (!state)
   {
