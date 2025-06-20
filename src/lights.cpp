@@ -13,7 +13,7 @@ static ZigbeeHueLight *zbDimmableLight = nullptr;
 static ZigbeeHueLight *zbColorOnOffLight = nullptr;
 static ZigbeeHueLight *zbColorTemperatureLight = nullptr;
 
-void hue_connect(int pin_to_blink, int button)
+void hue_connect(int pin_to_blink, int button, const std::vector<WizBulbInfo>& bulbs)
 {
   uint8_t phillips_hue_key[] = {0x81, 0x45, 0x86, 0x86, 0x5D, 0xC6, 0xC8, 0xB1, 0xC8, 0xCB, 0xC4, 0x2E, 0x5D, 0x65, 0xD3, 0xB9};
   Zigbee.setEnableJoiningToDistributed(true);
@@ -29,6 +29,16 @@ void hue_connect(int pin_to_blink, int button)
 
   digitalWrite(GREEN_PIN, HIGH);
   Serial.println("Connecting Zigbee to network");
+  
+  // Test mode variables
+  unsigned long lastTestTime = 0;
+  const unsigned long TEST_INTERVAL = 5000; // 5 seconds
+  bool testModeActive = bulbs.size() > 0; // Enable test mode if we have bulbs
+  
+  if (testModeActive) {
+    Serial.println("Test mode active: Will change bulb states every 5 seconds during Zigbee connection");
+  }
+  
   while (!Zigbee.connected())
   {
     Serial.print(".");
@@ -37,6 +47,34 @@ void hue_connect(int pin_to_blink, int button)
     digitalWrite(pin_to_blink, LOW);
     delay(100);
     checkForReset(button);
+    
+    // Test mode: Change bulb states every 5 seconds
+    if (testModeActive && (millis() - lastTestTime >= TEST_INTERVAL)) {
+      Serial.println("\n=== Test Mode: Changing bulb states ===");
+      
+      for (size_t i = 0; i < bulbs.size(); i++) {
+        WizBulbState newState;
+        newState.state = true; // Always turn on
+        
+        if (bulbs[i].features.brightness) {
+          // Random brightness 10-100%
+          newState.dimming = random(10, 101);
+          Serial.printf("Setting bulb %s brightness to %d%%\n", bulbs[i].ip.c_str(), newState.dimming);
+        } else {
+          // Toggle on/off for bulbs without brightness support
+          static bool toggleState = true;
+          newState.state = toggleState;
+          toggleState = !toggleState;
+          Serial.printf("Toggling bulb %s %s\n", bulbs[i].ip.c_str(), newState.state ? "ON" : "OFF");
+        }
+        
+        setBulbState(bulbs[i], newState);
+        delay(100); // Small delay between bulb commands
+      }
+      
+      lastTestTime = millis();
+      Serial.println("=== Test complete, resuming Zigbee connection ===");
+    }
   }
   digitalWrite(pin_to_blink, HIGH);
 }

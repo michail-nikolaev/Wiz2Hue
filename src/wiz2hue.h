@@ -90,7 +90,7 @@ IPAddress wifi_connect(int pin_to_blink, int button);
 IPAddress broadcastIP();
 
 void setup_lights();
-void hue_connect(int pin_to_blink, int button);
+void hue_connect(int pin_to_blink, int button, const std::vector<WizBulbInfo>& bulbs = std::vector<WizBulbInfo>());
 void hue_reset();
 
 // System reset functions

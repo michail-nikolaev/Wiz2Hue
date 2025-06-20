@@ -18,6 +18,9 @@ int ledBuiltinLeft = LED_BUILTIN_PERIOD;
 
 uint8_t button = BOOT_PIN;
 
+// Global storage for discovered bulbs
+std::vector<WizBulbInfo> globalDiscoveredBulbs;
+
 void setup()
 {
   Serial.begin(115200);
@@ -46,21 +49,21 @@ void setup()
 
   delay(1000);
   bool lightsFromCache = false;
-  std::vector<WizBulbInfo> discoveredBulbs = discoverOrLoadLights(broadcastIP(), &lightsFromCache);
+  globalDiscoveredBulbs = discoverOrLoadLights(broadcastIP(), &lightsFromCache);
   
   if (lightsFromCache) {
-    Serial.printf("Light discovery completed. Loaded %d Wiz bulbs from cache with full capability information.\n", discoveredBulbs.size());
+    Serial.printf("Light discovery completed. Loaded %d Wiz bulbs from cache with full capability information.\n", globalDiscoveredBulbs.size());
   } else {
-    Serial.printf("Light discovery completed. Discovered %d Wiz bulbs via network scan with full capability information.\n", discoveredBulbs.size());
+    Serial.printf("Light discovery completed. Discovered %d Wiz bulbs via network scan with full capability information.\n", globalDiscoveredBulbs.size());
   }
   
   // Read and print current state of each discovered bulb
-  if (discoveredBulbs.size() > 0) {
+  if (globalDiscoveredBulbs.size() > 0) {
     Serial.println("\n=== Reading current bulb states ===");
-    for (size_t i = 0; i < discoveredBulbs.size(); i++) {
-      Serial.printf("\nReading state of bulb %d/%d: %s\n", i + 1, discoveredBulbs.size(), discoveredBulbs[i].ip.c_str());
+    for (size_t i = 0; i < globalDiscoveredBulbs.size(); i++) {
+      Serial.printf("\nReading state of bulb %d/%d: %s\n", i + 1, globalDiscoveredBulbs.size(), globalDiscoveredBulbs[i].ip.c_str());
       
-      WizBulbState currentState = getBulbState(discoveredBulbs[i]);
+      WizBulbState currentState = getBulbState(globalDiscoveredBulbs[i]);
       
       if (currentState.isValid) {
         Serial.printf("Current state: %s\n", wizBulbStateToJson(currentState).c_str());
@@ -69,7 +72,7 @@ void setup()
       }
       
       // Add small delay between state requests
-      if (i < discoveredBulbs.size() - 1) {
+      if (i < globalDiscoveredBulbs.size() - 1) {
         delay(300);
       }
     }
@@ -77,7 +80,7 @@ void setup()
   }
 
   setup_lights();
-  hue_connect(YELLOW_PIN, button);
+  hue_connect(YELLOW_PIN, button, globalDiscoveredBulbs);
   Serial.println();
 
   delay(500);
