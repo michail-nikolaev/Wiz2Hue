@@ -1,4 +1,5 @@
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include "secrets.h"
 #include "wiz2hue.h"
 
@@ -12,22 +13,36 @@ IPAddress broadcastIP()
 
 IPAddress wifi_connect(int pin_to_blink, int button)
 {
-  // Comprehensive WiFi reset to handle post-upload state issues
+  // Aggressive WiFi reset with debug information
   Serial.println("Initializing WiFi...");
+  Serial.printf("SSID: %s\n", ssid);
+  Serial.printf("Initial WiFi Status: %d\n", WiFi.status());
+  
+  // Force complete WiFi shutdown
   WiFi.mode(WIFI_OFF);
-  delay(100);
+  delay(1000);
+  Serial.println("WiFi turned OFF");
+  
+  // Restart WiFi in station mode
   WiFi.mode(WIFI_STA);
-  delay(100);
+  delay(1000);
+  Serial.println("WiFi set to STA mode");
+  
+  // Disconnect any existing connections
   WiFi.disconnect(true);
-  delay(100);
+  delay(1000);
+  Serial.println("WiFi disconnected");
   
   Serial.printf("\n******************************************************Connecting to %s\n", ssid);
 
+  // Try connection with explicit parameters
   WiFi.begin(ssid, password);
+  Serial.printf("WiFi.begin() called, status: %d\n", WiFi.status());
 
   // Add timeout to prevent infinite loop
   unsigned long startTime = millis();
-  const unsigned long WIFI_TIMEOUT = 30000; // 30 seconds timeout
+  const unsigned long WIFI_TIMEOUT = 15000; // 15 seconds timeout
+  int retryCount = 0;
   
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -40,9 +55,17 @@ IPAddress wifi_connect(int pin_to_blink, int button)
     
     // Check for timeout and retry connection
     if (millis() - startTime > WIFI_TIMEOUT) {
-      Serial.println("\nWiFi connection timeout, retrying...");
+      retryCount++;
+      Serial.printf("\nWiFi connection timeout (attempt %d), status: %d\n", retryCount, WiFi.status());
+      
+      if (retryCount >= 3) {
+        Serial.println("Multiple WiFi failures - performing complete reset");
+        ESP.restart();
+      }
+      
+      Serial.println("Retrying WiFi connection...");
       WiFi.disconnect(true);
-      delay(1000);
+      delay(2000);
       WiFi.begin(ssid, password);
       startTime = millis(); // Reset timeout counter
     }
