@@ -121,7 +121,7 @@ WizBulbInfo wizBulbInfoFromJson(const String& json);
 bool initFileSystem();
 std::vector<WizBulbInfo> loadLightsFromFile();
 bool saveLightsToFile(const std::vector<WizBulbInfo>& bulbs);
-std::vector<WizBulbInfo> discoverOrLoadLights(IPAddress broadcastIP);
+std::vector<WizBulbInfo> discoverOrLoadLights(IPAddress broadcastIP, bool* fromCache = nullptr);
 void clearFileSystemCache();
 
 #endif

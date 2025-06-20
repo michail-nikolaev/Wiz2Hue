@@ -45,9 +45,14 @@ void setup()
   }
 
   delay(1000);
-  std::vector<WizBulbInfo> discoveredBulbs = discoverOrLoadLights(broadcastIP());
+  bool lightsFromCache = false;
+  std::vector<WizBulbInfo> discoveredBulbs = discoverOrLoadLights(broadcastIP(), &lightsFromCache);
   
-  Serial.printf("Light discovery completed. Found %d Wiz bulbs with full capability information.\n", discoveredBulbs.size());
+  if (lightsFromCache) {
+    Serial.printf("Light discovery completed. Loaded %d Wiz bulbs from cache with full capability information.\n", discoveredBulbs.size());
+  } else {
+    Serial.printf("Light discovery completed. Discovered %d Wiz bulbs via network scan with full capability information.\n", discoveredBulbs.size());
+  }
   
   // Read and print current state of each discovered bulb
   if (discoveredBulbs.size() > 0) {

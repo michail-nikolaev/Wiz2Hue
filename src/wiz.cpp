@@ -899,7 +899,7 @@ WizBulbInfo wizBulbInfoFromJson(const String& json)
 }
 
 
-std::vector<WizBulbInfo> discoverOrLoadLights(IPAddress broadcastIP)
+std::vector<WizBulbInfo> discoverOrLoadLights(IPAddress broadcastIP, bool* fromCache)
 {
     Serial.println("=== Smart Light Discovery ===");
     
@@ -908,12 +908,14 @@ std::vector<WizBulbInfo> discoverOrLoadLights(IPAddress broadcastIP)
     
     if (bulbs.size() > 0) {
         Serial.printf("Using %d cached lights from file\n", bulbs.size());
+        if (fromCache) *fromCache = true;
         return bulbs;
     }
     
     // No cached lights, perform discovery
     Serial.println("No cached lights found, performing network discovery...");
     bulbs = scanForWiz(broadcastIP);
+    if (fromCache) *fromCache = false;
     
     if (bulbs.size() > 0) {
         // Save discovered lights to file
