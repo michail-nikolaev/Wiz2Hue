@@ -6,12 +6,203 @@
 #endif
 
 #include <Zigbee.h>
+#include <vector>
+#include <map>
 
-static ZigbeeHueLight *zbTemperatureLight = nullptr;
-static ZigbeeHueLight *zbColorLight = nullptr;
-static ZigbeeHueLight *zbDimmableLight = nullptr;
-static ZigbeeHueLight *zbColorOnOffLight = nullptr;
-static ZigbeeHueLight *zbColorTemperatureLight = nullptr;
+// Forward declarations
+class ZigbeeWizLight;
+static void staticLightChangeCallback(bool state, uint8_t endpoint, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature);
+static void staticIdentifyCallback(uint16_t time);
+
+// Global mapping
+static std::map<uint8_t, ZigbeeWizLight*> endpointToLight;
+
+// Class to manage Zigbee-WiZ light pair
+class ZigbeeWizLight {
+private:
+  ZigbeeHueLight* zigbeeLight;
+  WizBulbInfo wizBulb;
+  uint8_t endpoint;
+  
+  // Current Hue light state
+  bool currentState;
+  uint8_t currentRed;
+  uint8_t currentGreen; 
+  uint8_t currentBlue;
+  uint8_t currentLevel;
+  uint16_t currentTemperature;
+  
+  // Rate limiting
+  unsigned long lastCommandTime;
+  unsigned long lastPeriodicUpdate;
+  bool hasPendingUpdate;
+  
+  static const unsigned long COMMAND_INTERVAL = 100;   // 100ms between commands
+  static const unsigned long PERIODIC_INTERVAL = 10000; // 10 seconds periodic update
+  
+public:
+  ZigbeeWizLight(uint8_t ep, const WizBulbInfo& bulb, es_zb_hue_light_type_t zigbeeType) 
+    : wizBulb(bulb), endpoint(ep), currentState(false), currentRed(0), currentGreen(0), 
+      currentBlue(0), currentLevel(0), currentTemperature(0), lastCommandTime(0), 
+      lastPeriodicUpdate(0), hasPendingUpdate(false) {
+    
+    // Read actual WiZ bulb state and use as initial state
+    WizBulbState actualState = getBulbState(wizBulb);
+    if (actualState.isValid) {
+      Serial.printf("Reading initial state for bulb %s: %s\n", 
+                    wizBulb.ip.c_str(), actualState.state ? "ON" : "OFF");
+      
+      currentState = actualState.state;
+      
+      if (actualState.dimming >= 0) {
+        currentLevel = map(actualState.dimming, 0, 100, 0, 255);
+      }
+      
+      if (actualState.r >= 0 && actualState.g >= 0 && actualState.b >= 0) {
+        currentRed = actualState.r;
+        currentGreen = actualState.g;
+        currentBlue = actualState.b;
+      }
+      
+      if (actualState.temp >= 0) {
+        // Convert Kelvin to mireds
+        currentTemperature = 1000000 / actualState.temp;
+      }
+    } else {
+      Serial.printf("Failed to read initial state for bulb %s: %s\n", 
+                    wizBulb.ip.c_str(), actualState.errorMessage.c_str());
+    }
+    
+    zigbeeLight = new ZigbeeHueLight(endpoint, zigbeeType);
+    
+    // Configure the light
+    zigbeeLight->onLightChange(staticLightChangeCallback);
+    zigbeeLight->onIdentify(staticIdentifyCallback);
+    
+    String modelName = getHueModelName(bulb);
+    zigbeeLight->setManufacturerAndModel("nkey", modelName.c_str());
+    zigbeeLight->setSwBuild("0.0.1");
+    zigbeeLight->setOnOffOnTime(0);
+    zigbeeLight->setOnOffGlobalSceneControl(false);
+  }
+  
+  ~ZigbeeWizLight() {
+    delete zigbeeLight;
+  }
+  
+  ZigbeeHueLight* getZigbeeLight() {
+    return zigbeeLight;
+  }
+  
+  uint8_t getEndpoint() const {
+    return endpoint;
+  }
+  
+  const WizBulbInfo& getWizBulb() const {
+    return wizBulb;
+  }
+  
+  void onLightChangeCallback(bool state, uint8_t ep, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature) {
+    // Update current state
+    currentState = state;
+    currentRed = red;
+    currentGreen = green;
+    currentBlue = blue;
+    currentLevel = level;
+    currentTemperature = temperature;
+    
+    hasPendingUpdate = true;
+    
+    // Update LED indicators for visual feedback
+    if (!state) {
+      analogWrite(BLUE_PIN, 0);
+      analogWrite(RED_PIN, 0);
+      analogWrite(GREEN_PIN, 0);
+      digitalWrite(YELLOW_PIN, 0);
+    } else {
+      analogWrite(BLUE_PIN, blue);
+      analogWrite(RED_PIN, red);
+      analogWrite(GREEN_PIN, green);
+      digitalWrite(YELLOW_PIN, 1);
+    }
+  }
+  
+  void onIdentifyCallback(uint16_t time) {
+    // Identify callback - could implement LED blinking here if needed
+  }
+  
+  void processCommands() {
+    unsigned long currentTime = millis();
+    
+    // Check for periodic update
+    if (currentTime - lastPeriodicUpdate >= PERIODIC_INTERVAL) {
+      hasPendingUpdate = true;
+      lastPeriodicUpdate = currentTime;
+    }
+    
+    // Send command if pending and rate limit allows
+    if (hasPendingUpdate && (currentTime - lastCommandTime >= COMMAND_INTERVAL)) {
+      sendToWizBulb();
+      hasPendingUpdate = false;
+      lastCommandTime = currentTime;
+    }
+  }
+  
+private:
+  void sendToWizBulb() {
+    // Convert current Hue state to WiZ state
+    WizBulbState wizState;
+    wizState.state = currentState;
+    
+    if (currentState && wizBulb.features.brightness) {
+      wizState.dimming = map(currentLevel, 0, 255, 0, 100);
+    }
+    
+    if (currentState && wizBulb.features.color) {
+      wizState.r = currentRed;
+      wizState.g = currentGreen;
+      wizState.b = currentBlue;
+    }
+    
+    if (currentState && wizBulb.features.color_tmp && currentTemperature > 0) {
+      // Convert mireds to Kelvin
+      int kelvin = 1000000 / currentTemperature;
+      // Clamp to bulb's supported range
+      if (kelvin < wizBulb.features.kelvin_range.min) {
+        kelvin = wizBulb.features.kelvin_range.min;
+      } else if (kelvin > wizBulb.features.kelvin_range.max) {
+        kelvin = wizBulb.features.kelvin_range.max;
+      }
+      wizState.temp = kelvin;
+    }
+    
+    setBulbState(wizBulb, wizState);
+  }
+  
+  String getHueModelName(const WizBulbInfo& bulb) {
+    switch (bulb.bulbClass) {
+      case BulbClass::RGB:
+        return "WizHue(LCT015)";
+      case BulbClass::RGBW:
+        return "WizHue(LCA001)";
+      case BulbClass::TW:
+        return "WizHue(LWO003)";
+      case BulbClass::DW:
+        return bulb.features.brightness ? "WizHue(LTA005)" : "WizHue(OnOff)";
+      case BulbClass::SOCKET:
+        return "WizHue(Socket)";
+      case BulbClass::FAN:
+        return "WizHue(Fan)";
+      default:
+        return "WizHue(Unknown)";
+    }
+  }
+};
+
+// Dynamic light management
+static std::vector<ZigbeeWizLight*> zigbeeWizLights;
+
+const uint8_t FIRST_ENDPOINT = 10;
 
 void hue_connect(int pin_to_blink, int button, const std::vector<WizBulbInfo>& bulbs)
 {
@@ -73,41 +264,53 @@ void hue_connect(int pin_to_blink, int button, const std::vector<WizBulbInfo>& b
   digitalWrite(pin_to_blink, HIGH);
 }
 
-void setLight(bool state, uint8_t endpoint, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature)
-{
-  if (!state)
-  {
-    analogWrite(BLUE_PIN, 0);
-    analogWrite(RED_PIN, 0);
-    analogWrite(GREEN_PIN, 0);
-    digitalWrite(YELLOW_PIN, 0);
-  }
-  else
-  {
-    Serial.print("\nlevel ");
-    Serial.print(level);
-    Serial.print("\nblue ");
-    Serial.print(blue);
-    Serial.print("\nred ");
-    Serial.print(red);
-    Serial.print("\ngreen ");
-    Serial.print(green);
-    Serial.print("\ntemperature ");
-    Serial.print(temperature);
-    Serial.print("\n");
+// Sort bulbs by MAC address for consistent endpoint assignment
+std::vector<WizBulbInfo> sortBulbsByMac(const std::vector<WizBulbInfo>& bulbs) {
+  std::vector<WizBulbInfo> sorted = bulbs;
+  std::sort(sorted.begin(), sorted.end(), [](const WizBulbInfo& a, const WizBulbInfo& b) {
+    return a.mac < b.mac;
+  });
+  return sorted;
+}
 
-    analogWrite(BLUE_PIN, blue);
-    analogWrite(RED_PIN, red);
-    analogWrite(GREEN_PIN, green);
-
-    digitalWrite(YELLOW_PIN, 1);
+// Map WiZ bulb capabilities to Zigbee light type
+es_zb_hue_light_type_t mapBulbToZigbeeType(const WizBulbInfo& bulb) {
+  switch (bulb.bulbClass) {
+    case BulbClass::RGB:
+      return ESP_ZB_HUE_LIGHT_TYPE_COLOR;
+    case BulbClass::RGBW:
+      return ESP_ZB_HUE_LIGHT_TYPE_EXTENDED_COLOR;
+    case BulbClass::TW:
+      return ESP_ZB_HUE_LIGHT_TYPE_TEMPERATURE;
+    case BulbClass::DW:
+      return bulb.features.brightness ? ESP_ZB_HUE_LIGHT_TYPE_DIMMABLE : ESP_ZB_HUE_LIGHT_TYPE_ON_OFF;
+    case BulbClass::SOCKET:
+    case BulbClass::FAN:
+    default:
+      return ESP_ZB_HUE_LIGHT_TYPE_ON_OFF;
   }
 }
 
-// Create a task on identify call to handle the identify function
-void identify(uint16_t time)
+// Static callback implementations
+static void staticLightChangeCallback(bool state, uint8_t endpoint, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature) {
+  auto it = endpointToLight.find(endpoint);
+  if (it != endpointToLight.end()) {
+    it->second->onLightChangeCallback(state, endpoint, red, green, blue, level, temperature);
+  } else {
+    Serial.printf("ERROR: No ZigbeeWizLight found for endpoint %d\n", endpoint);
+  }
+}
+
+static void staticIdentifyCallback(uint16_t time) {
+  // Static identify callback - implementation could be added if needed
+}
+
+// Process all light commands
+void processLightCommands()
 {
-  log_d("Identify called for %d seconds", time);
+  for (auto* light : zigbeeWizLights) {
+    light->processCommands();
+  }
 }
 
 
@@ -116,52 +319,48 @@ void hue_reset()
   Zigbee.factoryReset();
 }
 
-void setup_lights()
+void setup_lights(const std::vector<WizBulbInfo>& bulbs)
 {
-
-  zbTemperatureLight = new ZigbeeHueLight(0x0B, ESP_ZB_HUE_LIGHT_TYPE_TEMPERATURE);
-  zbColorLight = new ZigbeeHueLight(0x0C, ESP_ZB_HUE_LIGHT_TYPE_COLOR);
-  zbDimmableLight = new ZigbeeHueLight(0x0D, ESP_ZB_HUE_LIGHT_TYPE_DIMMABLE);
-  zbColorTemperatureLight = new ZigbeeHueLight(0x0E, ESP_ZB_HUE_LIGHT_TYPE_EXTENDED_COLOR);
-  zbColorOnOffLight = new ZigbeeHueLight(0x0F, ESP_ZB_HUE_LIGHT_TYPE_ON_OFF);
-
-  zbColorLight->onLightChange(setLight);
-  zbColorLight->onIdentify(identify);
-  zbColorLight->setManufacturerAndModel("nkey", "WizHue(LCT015)");
-  zbColorLight->setSwBuild("0.0.1");
-  zbColorLight->setOnOffOnTime(0);
-  zbColorLight->setOnOffGlobalSceneControl(false);
-  Zigbee.addEndpoint(zbColorLight);
-
-  zbDimmableLight->onLightChange(setLight);
-  zbDimmableLight->onIdentify(identify);
-  zbDimmableLight->setManufacturerAndModel("nkey", "WizHue(LTA005)");
-  zbDimmableLight->setSwBuild("0.0.1");
-  zbDimmableLight->setOnOffOnTime(0);
-  zbDimmableLight->setOnOffGlobalSceneControl(false);
-  Zigbee.addEndpoint(zbDimmableLight);
-
-  zbTemperatureLight->onLightChange(setLight);
-  zbTemperatureLight->onIdentify(identify);
-  zbTemperatureLight->setManufacturerAndModel("nkey", "WizHue(LWO003)");
-  zbTemperatureLight->setSwBuild("0.0.1");
-  zbTemperatureLight->setOnOffOnTime(0);
-  zbTemperatureLight->setOnOffGlobalSceneControl(false);
-  Zigbee.addEndpoint(zbTemperatureLight);
-
-  zbColorTemperatureLight->onLightChange(setLight);
-  zbColorTemperatureLight->onIdentify(identify);
-  zbColorTemperatureLight->setManufacturerAndModel("nkey", "WizHue(LCA001)");
-  zbColorTemperatureLight->setSwBuild("0.0.1");
-  zbColorTemperatureLight->setOnOffOnTime(0);
-  zbColorTemperatureLight->setOnOffGlobalSceneControl(false);
-  Zigbee.addEndpoint(zbColorTemperatureLight);
-
-  zbColorOnOffLight->onLightChange(setLight);
-  zbColorOnOffLight->onIdentify(identify);
-  zbColorOnOffLight->setManufacturerAndModel("nkey", "WizHue(OnOff)");
-  zbColorOnOffLight->setSwBuild("0.0.1");
-  zbColorOnOffLight->setOnOffOnTime(0);
-  zbColorOnOffLight->setOnOffGlobalSceneControl(false);
-  Zigbee.addEndpoint(zbColorOnOffLight);
+  Serial.printf("\n=== Setting up Zigbee lights for %d WiZ bulbs ===\n", bulbs.size());
+  
+  // Clear existing lights
+  for (auto* light : zigbeeWizLights) {
+    delete light;
+  }
+  zigbeeWizLights.clear();
+  endpointToLight.clear();
+  
+  // Sort bulbs by MAC address for consistent endpoint assignment
+  std::vector<WizBulbInfo> sortedBulbs = sortBulbsByMac(bulbs);
+  
+  // Create ZigbeeWizLight for each discovered WiZ bulb
+  uint8_t endpoint = FIRST_ENDPOINT;
+  for (const auto& bulb : sortedBulbs) {
+    if (!bulb.isValid) {
+      Serial.printf("Skipping invalid bulb: %s\n", bulb.ip.c_str());
+      continue;
+    }
+    
+    es_zb_hue_light_type_t zigbeeType = mapBulbToZigbeeType(bulb);
+    
+    Serial.printf("Creating ZigbeeWiz light - IP: %s, MAC: %s, Type: %d, Endpoint: %d\n", 
+                  bulb.ip.c_str(), bulb.mac.c_str(), zigbeeType, endpoint);
+    
+    // Create new ZigbeeWizLight
+    ZigbeeWizLight* zigbeeWizLight = new ZigbeeWizLight(endpoint, bulb, zigbeeType);
+    
+    // Add to Zigbee stack
+    Zigbee.addEndpoint(zigbeeWizLight->getZigbeeLight());
+    
+    // Store references
+    zigbeeWizLights.push_back(zigbeeWizLight);
+    endpointToLight[endpoint] = zigbeeWizLight;
+    
+    Serial.printf("Successfully created ZigbeeWiz light (endpoint %d)\n", endpoint);
+    
+    endpoint++; // Next endpoint for next bulb
+  }
+  
+  Serial.printf("=== Setup complete: %d ZigbeeWiz lights created ===\n\n", zigbeeWizLights.size());
 }
+

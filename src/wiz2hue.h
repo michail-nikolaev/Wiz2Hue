@@ -89,9 +89,10 @@ struct WizBulbInfo {
 IPAddress wifi_connect(int pin_to_blink, int button);
 IPAddress broadcastIP();
 
-void setup_lights();
+void setup_lights(const std::vector<WizBulbInfo>& bulbs);
 void hue_connect(int pin_to_blink, int button, const std::vector<WizBulbInfo>& bulbs = std::vector<WizBulbInfo>());
 void hue_reset();
+void processLightCommands();
 
 // System reset functions
 void checkForReset(int button);

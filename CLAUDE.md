@@ -17,7 +17,10 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **JSON Serialization**: Complete bidirectional conversion for debugging and data persistence
 
 **Zigbee Bridge (`src/lights.cpp`)**
-- **Hue Emulation**: Makes WiZ lights appear as native Hue devices
+- **Dynamic Light Creation**: Creates Zigbee lights dynamically based on discovered WiZ bulbs
+- **ZigbeeWizLight Class**: Encapsulates each Zigbee-WiZ light pair with individual state management
+- **Rate Limiting**: Individual 100ms rate limiting per light to prevent WiZ bulb overload
+- **State Synchronization**: Reads actual WiZ bulb state on startup for accurate initial state
 - **Zigbee Protocol**: ESP32-C6 Zigbee stack integration for network communication
 - **Device Registration**: Manages device pairing and network joining
 
@@ -41,14 +44,19 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **`WizBulbState`**: Current device state with -1 indicating "unknown" values
 **`Features`**: Capability flags (brightness, color, color_tmp, effect, fan) with Kelvin ranges
 **`BulbClass`**: Enum categorizing bulb types for appropriate command filtering
+**`ZigbeeWizLight`**: Class managing individual Zigbee-WiZ light pairs with state and rate limiting
 
 ### State Management Pattern
 
 1. **Discovery**: `discoverOrLoadLights()` tries cache first, falls back to network scan
 2. **Persistent Storage**: Discovered lights cached in `/lights.json` on LittleFS
-3. **State Reading**: `getBulbState()` queries current device state via UDP "getPilot"
-4. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters
-5. **JSON Debug**: All operations output structured JSON for debugging
+3. **Dynamic Zigbee Creation**: `setup_lights()` creates ZigbeeWizLight objects for each discovered WiZ bulb
+4. **Endpoint Assignment**: Consistent endpoint IDs (starting from 10) based on MAC address sorting
+5. **Initial State Sync**: Each ZigbeeWizLight reads actual WiZ bulb state on startup
+6. **State Reading**: `getBulbState()` queries current device state via UDP "getPilot"
+7. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters
+8. **Rate Limited Updates**: Individual 100ms rate limiting per light with 10-second periodic refresh
+9. **JSON Debug**: All operations output structured JSON for debugging
 
 ### File System Operations
 
@@ -95,6 +103,23 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Reset System**: Visual feedback with fast LED blinking (100ms intervals) during button hold
 **Filesystem Sync**: Explicit LittleFS flush operations prevent data loss during resets
 
+### Zigbee Light Management
+
+**Dynamic Creation**: Zigbee lights are created dynamically based on discovered WiZ bulbs rather than hardcoded
+**Endpoint Mapping**: Endpoints start from 10 and increment sequentially for each bulb (sorted by MAC)
+**Individual Rate Limiting**: Each ZigbeeWizLight has independent 100ms rate limiting to prevent WiZ overload
+**State Synchronization**: On startup, each light reads the actual WiZ bulb state for accurate initial values
+**Capability Mapping**: WiZ bulb types automatically map to appropriate Zigbee light types:
+- RGB → ESP_ZB_HUE_LIGHT_TYPE_COLOR
+- RGBW → ESP_ZB_HUE_LIGHT_TYPE_EXTENDED_COLOR
+- TW → ESP_ZB_HUE_LIGHT_TYPE_TEMPERATURE
+- DW → ESP_ZB_HUE_LIGHT_TYPE_DIMMABLE (or ON_OFF if no brightness)
+- Socket/Fan → ESP_ZB_HUE_LIGHT_TYPE_ON_OFF
+
+**Periodic Updates**: Every 10 seconds, last known state is resent to ensure bulbs stay synchronized
+**Optimized Callbacks**: Minimal Serial output in callbacks to reduce processing lag
+**Color Temperature**: Automatic conversion between Zigbee mireds and WiZ Kelvin with range clamping
+
 ## Configuration
 
 **Network Settings**: Configure WiFi credentials in `src/secrets.h` (gitignored)
@@ -113,4 +138,4 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Core Dump**: 64KB (crash debugging)
 - **System**: 32KB (NVS + PHY calibration)
 
-The system performs automatic WiZ discovery with intelligent caching - uses stored lights for fast startup, network discovery as fallback, and outputs comprehensive JSON logs for monitoring and debugging.
+The system performs automatic WiZ discovery with intelligent caching - uses stored lights for fast startup, network discovery as fallback, creates dynamic Zigbee lights with individual rate limiting and state management, and outputs comprehensive JSON logs for monitoring and debugging.

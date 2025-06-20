@@ -79,7 +79,7 @@ void setup()
     Serial.println("\n=== All bulb states collected ===");
   }
 
-  setup_lights();
+  setup_lights(globalDiscoveredBulbs);
   hue_connect(YELLOW_PIN, button, globalDiscoveredBulbs);
   Serial.println();
 
@@ -146,6 +146,9 @@ void loop()
 {
   ledDigital(&ledBuiltinLeft, LED_BUILTIN_PERIOD, LED_BUILTIN, SLEEP);
   delay(SLEEP);
+
+  // Process queued light commands with rate limiting
+  processLightCommands();
 
   checkForReset(button);
 }
