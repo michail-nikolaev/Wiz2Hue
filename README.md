@@ -49,15 +49,6 @@ Hold the boot button for 3+ seconds while observing fast LED blinking:
 - Resets Zigbee network settings
 - Forces device restart for clean state
 
-## Code Organization
-
-- **main.cpp**: Main application logic and system control
-- **wiz.cpp**: WiZ light discovery and communication
-- **lights.cpp**: Zigbee/Hue device emulation
-- **wifi.cpp**: WiFi connection management
-- **fs.cpp**: Filesystem operations and caching
-- **wiz2hue.h**: Shared data structures and declarations
-
 ## Development
 
 See [CLAUDE.md](CLAUDE.md) for detailed architecture documentation, development notes, and technical implementation details.
@@ -72,9 +63,9 @@ This project is provided as-is for educational and personal use.
 
 The following resources were instrumental in developing this project:
 
-- **Zigbee Hue Tutorial**: https://wejn.org/2025/01/zigbee-hue-llo-world/
-- **ESP Zigbee SDK Issues**: https://github.com/espressif/esp-zigbee-sdk/issues/358
-- **ZLL Lights Reference**: https://github.com/peeveeone/ZLL_Lights
-- **Zigbee Lamp Implementation**: https://github.com/ks0777/zigbee-lamp
-- **Hue Device Specifications**: https://github.com/ebaauw/homebridge-hue/wiki/ZigBee-Devices#hue-lights
-- **WiZ Protocol Library**: https://github.com/sbidy/pywizlight
+- **Zigbee Hue Tutorial** by Michal J. ([@wejn](https://github.com/wejn)): https://wejn.org/2025/01/zigbee-hue-llo-world/
+- **ESP Zigbee SDK Issue** by m4nu-el ([@m4nu-el](https://github.com/m4nu-el)): https://github.com/espressif/esp-zigbee-sdk/issues/358
+- **ZLL Lights Reference** by [@peeveeone](https://github.com/peeveeone): https://github.com/peeveeone/ZLL_Lights
+- **Zigbee Lamp Implementation** by [@ks0777](https://github.com/ks0777): https://github.com/ks0777/zigbee-lamp
+- **Hue Device Specifications** by Erik Baauw ([@ebaauw](https://github.com/ebaauw)): https://github.com/ebaauw/homebridge-hue/wiki/ZigBee-Devices#hue-lights
+- **WiZ Protocol Library** by [@sbidy](https://github.com/sbidy) and contributors: https://github.com/sbidy/pywizlight
