@@ -16,14 +16,24 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **State Management**: Reads/writes bulb state with capability-aware filtering
 - **JSON Serialization**: Complete bidirectional conversion for debugging and data persistence
 
-**Zigbee Bridge (`src/lights.cpp`, `src/main.cpp`)**
+**Zigbee Bridge (`src/lights.cpp`)**
 - **Hue Emulation**: Makes WiZ lights appear as native Hue devices
 - **Zigbee Protocol**: ESP32-C6 Zigbee stack integration for network communication
 - **Device Registration**: Manages device pairing and network joining
 
+**System Control (`src/main.cpp`)**
+- **Main Application Logic**: Setup, loop, and system coordination
+- **Reset System**: Unified reset with visual feedback and reliable filesystem clearing
+- **Button Handling**: Reset available during all connection phases (WiFi, Zigbee, setup, main loop)
+
 **Network Layer (`src/wifi.cpp`)**
 - **WiFi Management**: Connects to local network for WiZ discovery
 - **Broadcast IP Discovery**: Automatically determines network broadcast address
+
+**Filesystem Management (`src/fs.cpp`)**
+- **Persistent Storage**: LittleFS operations for light caching and configuration
+- **Cache Management**: Smart loading/saving of discovered light configurations
+- **Reliable Reset**: Explicit filesystem synchronization to ensure data persistence
 
 ### Key Data Structures
 
@@ -45,6 +55,8 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Cache Management**: Lights stored in `/lights.json` for fast startup
 - **Smart Discovery**: Uses cached lights if available, network discovery as fallback
 - **Unified Reset**: `resetSystem()` clears both LittleFS cache and Zigbee network
+- **Reliable Persistence**: `LittleFS.end()` forces write buffer flush before system reset
+- **Filesystem Sync**: Explicit unmount/remount cycle ensures data integrity during resets
 
 ## Hardware Configuration
 
@@ -80,6 +92,8 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **State Defaults**: Use -1 for unknown/unset values throughout `WizBulbState` structure
 **JSON Output**: All debug information uses structured JSON format for parsing and analysis
 **Error Handling**: Comprehensive error messages with retry logic for network operations
+**Reset System**: Visual feedback with fast LED blinking (100ms intervals) during button hold
+**Filesystem Sync**: Explicit LittleFS flush operations prevent data loss during resets
 
 ## Configuration
 
@@ -87,7 +101,8 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Zigbee Mode**: Currently configured as End Device (`-DZIGBEE_MODE_ED`)
 **Serial Monitor**: 115200 baud for debug output and state monitoring
 **File System**: LittleFS mounted automatically, uses "spiffs" partition for Arduino compatibility
-**Reset Behavior**: 3+ second button hold clears both filesystem cache and Zigbee network
+**Reset Behavior**: 3+ second button hold with fast LED blinking clears both filesystem cache and Zigbee network
+**Reset Availability**: Reset function active during WiFi connection, Zigbee connection, setup, and main loop
 
 ## Partition Table (`zigbee_spiffs.csv`)
 

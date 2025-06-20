@@ -128,7 +128,7 @@ void resetSystem()
     hue_reset();
     
     Serial.println("System reset complete - device will restart");
-    delay(1000);
+    delay(500); // Additional delay to ensure all operations complete
     ESP.restart();
 }
 

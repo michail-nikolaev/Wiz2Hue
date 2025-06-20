@@ -125,4 +125,16 @@ void clearFileSystemCache()
         LittleFS.remove("/config.json");
         Serial.println("Removed config.json");
     }
+    
+    // Force filesystem to flush all pending operations to flash
+    Serial.println("Syncing filesystem changes to flash...");
+    LittleFS.end();
+    delay(100); // Give time for flash write operations to complete
+    
+    // Reinitialize filesystem to ensure clean state
+    if (!LittleFS.begin()) {
+        Serial.println("Warning: Failed to remount LittleFS after cache clear");
+    } else {
+        Serial.println("Filesystem cache cleared and synced successfully");
+    }
 }
