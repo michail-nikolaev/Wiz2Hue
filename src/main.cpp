@@ -30,10 +30,12 @@ void setup()
   pinMode(YELLOW_PIN, OUTPUT);
   pinMode(button, INPUT_PULLUP);
 
-  for (int p = 0; p < D9; p++)
-  {
-    digitalWrite(p, LOW);
-  }
+  // Initialize only the pins we've configured as outputs
+  digitalWrite(LED_BUILTIN, LOW);
+  digitalWrite(RED_PIN, LOW);
+  digitalWrite(BLUE_PIN, LOW);
+  digitalWrite(GREEN_PIN, LOW);
+  digitalWrite(YELLOW_PIN, LOW);
 
   wifi_connect(RED_PIN, button);
 
