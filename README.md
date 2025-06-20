@@ -10,14 +10,14 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Intelligent Discovery**: Automatic WiZ light detection on local network with persistent caching
 - **Smart Capabilities**: Detects and respects bulb capabilities (RGB, RGBW, Tunable White, Dimmable, etc.)
 - **Persistent Storage**: Caches discovered lights for fast startup using LittleFS filesystem
-- **Visual Reset System**: Fast LED blinking during 3+ second button hold for system reset
+- **Visual Reset System**: Fast built-in LED blinking during 3+ second button hold for system reset
 - **Robust Reset**: Reset available during WiFi connection, Zigbee pairing, and normal operation
 
 ## Hardware Requirements
 
-- **Seeed XIAO ESP32-C6** development board
-- LED indicators connected to pins D0-D3 (Red, Blue, Green, Yellow)
+- **ESP32-C6** development board (Seeed XIAO ESP32-C6 recommended, other ESP32-C6 models may work)
 - Built-in boot button for reset functionality
+- Optional: LED indicators on pins D0-D3 for visual status feedback
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
    #define PASSWORD "YourWiFiPassword"
    ```
 
-2. **Flash Firmware**: Upload to Seeed XIAO ESP32-C6 using Arduino IDE or PlatformIO
+2. **Flash Firmware**: Upload to ESP32-C6 using PlatformIO
 
 3. **Discover Lights**: Device automatically scans for WiZ lights on startup
 
@@ -49,17 +49,14 @@ Hold the boot button for 3+ seconds while observing fast LED blinking:
 - Resets Zigbee network settings
 - Forces device restart for clean state
 
-## Project Structure
+## Code Organization
 
-```
-src/
-├── main.cpp        # Main application logic and system control
-├── wiz.cpp         # WiZ light discovery and communication
-├── lights.cpp      # Zigbee/Hue device emulation
-├── wifi.cpp        # WiFi connection management
-├── fs.cpp          # Filesystem operations and caching
-└── wiz2hue.h       # Shared data structures and declarations
-```
+- **main.cpp**: Main application logic and system control
+- **wiz.cpp**: WiZ light discovery and communication
+- **lights.cpp**: Zigbee/Hue device emulation
+- **wifi.cpp**: WiFi connection management
+- **fs.cpp**: Filesystem operations and caching
+- **wiz2hue.h**: Shared data structures and declarations
 
 ## Development
 
