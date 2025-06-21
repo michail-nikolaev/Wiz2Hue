@@ -626,7 +626,7 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
 
     // Serial.printf("Setting bulb state for %s\n", deviceIP.toString().c_str());
     // Serial.printf("  Requested state: %s\n", wizBulbStateToJson(state).c_str());
-    Serial.printf("  Control message: %s\n", controlMessage.c_str());
+    // Serial.printf("  Control message: %s\n", controlMessage.c_str());
 
     // Send control command - WiZ bulbs typically don't send acknowledgment responses to setPilot
     udp.beginPacket(deviceIP, WIZ_PORT);

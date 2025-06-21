@@ -120,8 +120,8 @@ public:
   
   void onLightChangeCallback(bool state, uint8_t ep, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature) {
     // Optional debug output - uncomment to enable detailed logging
-    Serial.printf("onLightChange EP:%d State:%s RGB:(%d,%d,%d) Level:%d Temp:%d mireds\n", 
-                  ep, state ? "ON" : "OFF", red, green, blue, level, temperature);
+    // Serial.printf("onLightChange EP:%d State:%s RGB:(%d,%d,%d) Level:%d Temp:%d mireds\n", 
+    //               ep, state ? "ON" : "OFF", red, green, blue, level, temperature);
     
     // Detect what changed to send only relevant parameters
     bool rgbChanged = (red != prevRed || green != prevGreen || blue != prevBlue);
@@ -198,7 +198,7 @@ private:
       wizState.r = currentRed;
       wizState.g = currentGreen;
       wizState.b = currentBlue;      
-      Serial.printf("  → Sending RGB mode: RGB(%d,%d,%d), temp excluded\n", (int)currentRed, (int)currentGreen, (int)currentBlue);
+      //Serial.printf("  → Sending RGB mode: RGB(%d,%d,%d), temp excluded\n", (int)currentRed, (int)currentGreen, (int)currentBlue);
     } else if (currentState && wizBulb.features.color_tmp && currentTemperature > 0) {
       // Temperature mode - send temperature, exclude RGB
       int kelvin = 1000000 / currentTemperature;
