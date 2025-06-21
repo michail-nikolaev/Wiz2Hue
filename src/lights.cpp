@@ -85,7 +85,8 @@ public:
                     wizBulb.ip.c_str(), actualState.errorMessage.c_str());
     }
     
-    zigbeeLight = new ZigbeeHueLight(endpoint, zigbeeType);
+    zigbeeLight = new ZigbeeHueLight(endpoint, zigbeeType, 1000000 / bulb.features.kelvin_range.max, 1000000 / bulb.features.kelvin_range.min);
+
     
     // Configure the light
     zigbeeLight->onLightChange(staticLightChangeCallback);
