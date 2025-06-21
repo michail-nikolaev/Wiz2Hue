@@ -85,7 +85,10 @@ public:
                     wizBulb.ip.c_str(), actualState.errorMessage.c_str());
     }
     
-    zigbeeLight = new ZigbeeHueLight(endpoint, zigbeeType, 1000000 / bulb.features.kelvin_range.max, 1000000 / bulb.features.kelvin_range.min);
+    // Convert Kelvin range to mireds for ZigbeeHueLight constructor
+    uint16_t min_mireds = 1000000 / bulb.features.kelvin_range.max;  // Higher Kelvin = lower mireds
+    uint16_t max_mireds = 1000000 / bulb.features.kelvin_range.min;  // Lower Kelvin = higher mireds
+    zigbeeLight = new ZigbeeHueLight(endpoint, zigbeeType, min_mireds, max_mireds);
 
     
     // Configure the light
