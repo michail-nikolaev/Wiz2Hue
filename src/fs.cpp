@@ -126,6 +126,32 @@ void clearFileSystemCache()
         Serial.println("Removed config.json");
     }
     
+    // Clear ZigbeeWizLight settings files (light_*.json)
+    File root = LittleFS.open("/");
+    if (root) {
+        File file = root.openNextFile();
+        int removedLightFiles = 0;
+        while (file) {
+            String fileName = file.name();
+            if (fileName.startsWith("light_") && fileName.endsWith(".json")) {
+                file.close();
+                if (LittleFS.remove("/" + fileName)) {
+                    Serial.printf("Successfully removed %s\n", fileName.c_str());
+                    removedLightFiles++;
+                } else {
+                    Serial.printf("Failed to remove %s\n", fileName.c_str());
+                }
+            } else {
+                file.close();
+            }
+            file = root.openNextFile();
+        }
+        root.close();
+        Serial.printf("Removed %d ZigbeeWizLight settings files\n", removedLightFiles);
+    } else {
+        Serial.println("Failed to open root directory for cleanup");
+    }
+    
     // Force filesystem to flush all pending operations to flash
     Serial.println("Syncing filesystem changes to flash...");
     LittleFS.end();

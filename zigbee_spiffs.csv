@@ -12,21 +12,20 @@
 # Partition descriptions:
 # nvs: Non-Volatile Storage for WiFi config and system settings (24KB at 36KB offset)
 # phy_init: PHY calibration data for WiFi/Bluetooth radio (4KB)
-# factory: Main firmware image with Arduino framework + Zigbee stack (1.6MB)
+# factory: Main firmware image with Arduino framework + Zigbee stack 2MB)
 # nvs_key: NVS encryption keys for secure Zigbee storage (4KB)
 # zb_storage: Zigbee network config and device database (16KB)
 # zb_fct: Zigbee factory configuration parameters (4KB)
 # coredump: Core dump storage for crash debugging (64KB)
 # spiffs: LittleFS filesystem for lights.json cache and app data (896KB, named 'spiffs' for Arduino compatibility)
 
+# Name,   Type, SubType, Offset,  Size,    Flags
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 0x1A0000,
+factory,  app,  factory, 0x10000, 0x200000,
 nvs_key,  data, nvs_keys, ,       0x1000,
 zb_storage, data, fat,   ,        0x4000,
 zb_fct,   data, fat,     ,        0x1000,
 coredump, data, coredump, ,       0x10000,
-spiffs, data, spiffs, ,       0xE0000,
-                                         
-                                         
+spiffs, data, spiffs, ,       0xA0000,
                                          

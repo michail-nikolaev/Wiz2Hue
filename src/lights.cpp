@@ -6,6 +6,7 @@
 #endif
 
 #include <Zigbee.h>
+#include <ArduinoJson.h>
 #include <vector>
 #include <map>
 
@@ -44,45 +45,166 @@ private:
   unsigned long lastPeriodicUpdate;
   bool hasPendingUpdate;
   
+  // Settings save rate limiting
+  unsigned long lastSettingsSave;
+  bool hasPendingSettingsSave;
+  
   static const unsigned long COMMAND_INTERVAL = 100;   // 100ms between commands
   static const unsigned long PERIODIC_INTERVAL = 10000; // 10 seconds periodic update
+  static const unsigned long SETTINGS_SAVE_INTERVAL = 10000; // 10 seconds between settings saves
+  
+  // Settings file management
+  String getSettingsFilePath() const {
+    String macForFilename = wizBulb.mac;
+    macForFilename.replace(":", "");
+    return "/light_" + macForFilename + ".json";
+  }
+  
+  void saveSettings() {
+    JsonDocument doc;
+    doc["mac"] = wizBulb.mac;
+    doc["endpoint"] = endpoint;
+    doc["state"] = currentState;
+    doc["red"] = currentRed;
+    doc["green"] = currentGreen;
+    doc["blue"] = currentBlue;
+    doc["level"] = currentLevel;
+    doc["temperature"] = currentTemperature;
+    
+    String jsonContent;
+    serializeJson(doc, jsonContent);
+    
+    String filepath = getSettingsFilePath();
+    File file = LittleFS.open(filepath, "w");
+    if (file) {
+      file.print(jsonContent);
+      file.close();
+      Serial.printf("Saved settings for light %s: %s\n", wizBulb.mac.c_str(), jsonContent.c_str());
+    } else {
+      Serial.printf("Failed to save settings for light %s\n", wizBulb.mac.c_str());
+    }
+  }
+  
+  bool loadSettings() {
+    String filepath = getSettingsFilePath();
+    if (!LittleFS.exists(filepath)) {
+      return false;
+    }
+    
+    File file = LittleFS.open(filepath, "r");
+    if (!file) {
+      return false;
+    }
+    
+    String jsonContent = file.readString();
+    file.close();
+    
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, jsonContent);
+    if (error) {
+      Serial.printf("Failed to parse settings for light %s: %s\n", wizBulb.mac.c_str(), error.c_str());
+      return false;
+    }
+    
+    // Load settings
+    if (doc["state"].is<bool>()) currentState = doc["state"];
+    if (doc["red"].is<int>()) currentRed = doc["red"];
+    if (doc["green"].is<int>()) currentGreen = doc["green"];
+    if (doc["blue"].is<int>()) currentBlue = doc["blue"];
+    if (doc["level"].is<uint8_t>()) currentLevel = doc["level"];
+    if (doc["temperature"].is<int>()) currentTemperature = doc["temperature"];
+    
+    // Set previous state for change detection
+    prevRed = currentRed >= 0 ? currentRed : 0;
+    prevGreen = currentGreen >= 0 ? currentGreen : 0;
+    prevBlue = currentBlue >= 0 ? currentBlue : 0;
+    prevTemperature = currentTemperature >= 0 ? currentTemperature : 0;
+    
+    Serial.printf("Loaded settings for light %s: %s\n", wizBulb.mac.c_str(), jsonContent.c_str());
+    return true;
+  }
+  
+  void restoreSettingsToWizBulb() {
+    if (!currentState && currentRed < 0 && currentGreen < 0 && currentBlue < 0 && currentTemperature < 0) {
+      Serial.printf("No valid settings to restore for light %s\n", wizBulb.mac.c_str());
+      return;
+    }
+    
+    Serial.printf("Restoring settings to WiZ bulb %s\n", wizBulb.mac.c_str());
+    
+    WizBulbState wizState;
+    wizState.state = currentState;
+    
+    if (currentState && wizBulb.features.brightness) {
+      wizState.dimming = map(currentLevel, 0, 255, 0, 100);
+    }
+    
+    if (currentState && wizBulb.features.color && 
+        currentRed >= 0 && currentGreen >= 0 && currentBlue >= 0) {
+      wizState.r = currentRed;
+      wizState.g = currentGreen;
+      wizState.b = currentBlue;
+    } else if (currentState && wizBulb.features.color_tmp && currentTemperature > 0) {
+      int kelvin = 1000000 / currentTemperature;
+      if (kelvin < wizBulb.features.kelvin_range.min) {
+        kelvin = wizBulb.features.kelvin_range.min;
+      } else if (kelvin > wizBulb.features.kelvin_range.max) {
+        kelvin = wizBulb.features.kelvin_range.max;
+      }
+      wizState.temp = kelvin;
+    }
+    
+    setBulbState(wizBulb, wizState);
+  }
   
 public:
   ZigbeeWizLight(uint8_t ep, const WizBulbInfo& bulb, es_zb_hue_light_type_t zigbeeType) 
-    : wizBulb(bulb), endpoint(ep), currentState(false), currentRed(0), currentGreen(0), 
-      currentBlue(0), currentLevel(0), currentTemperature(0), prevRed(0), prevGreen(0),
+    : wizBulb(bulb), endpoint(ep), currentState(false), currentRed(-1), currentGreen(-1), 
+      currentBlue(-1), currentLevel(0), currentTemperature(-1), prevRed(0), prevGreen(0),
       prevBlue(0), prevTemperature(0), lastCommandTime(0), lastPeriodicUpdate(0), 
-      hasPendingUpdate(false) {
+      hasPendingUpdate(false), lastSettingsSave(0), hasPendingSettingsSave(false) {
     
-    // Read actual WiZ bulb state and use as initial state
-    WizBulbState actualState = getBulbState(wizBulb);
-    if (actualState.isValid) {
-      Serial.printf("Reading initial state for bulb %s: %s\n", 
-                    wizBulb.ip.c_str(), actualState.state ? "ON" : "OFF");
-      
-      currentState = actualState.state;
-      
-      if (actualState.dimming >= 0) {
-        currentLevel = map(actualState.dimming, 0, 100, 0, 255);
-      }
-      
-      if (actualState.r >= 0 && actualState.g >= 0 && actualState.b >= 0) {
-        currentRed = actualState.r;
-        currentGreen = actualState.g;
-        currentBlue = actualState.b;
-        prevRed = currentRed;
-        prevGreen = currentGreen;
-        prevBlue = currentBlue;
-      }
-      
-      if (actualState.temp >= 0) {
-        // Convert Kelvin to mireds
-        currentTemperature = 1000000 / actualState.temp;
-        prevTemperature = currentTemperature;
+    // Try to load settings from JSON file first
+    bool settingsLoaded = loadSettings();
+    
+    if (!settingsLoaded) {
+      // No saved settings, read actual WiZ bulb state and use as initial state
+      WizBulbState actualState = getBulbState(wizBulb);
+      if (actualState.isValid) {
+        Serial.printf("Reading initial state for bulb %s: %s\n", 
+                      wizBulb.ip.c_str(), actualState.state ? "ON" : "OFF");
+        
+        currentState = actualState.state;
+        
+        if (actualState.dimming >= 0) {
+          currentLevel = map(actualState.dimming, 0, 100, 0, 255);
+        }
+        
+        if (actualState.r >= 0 && actualState.g >= 0 && actualState.b >= 0) {
+          currentRed = actualState.r;
+          currentGreen = actualState.g;
+          currentBlue = actualState.b;
+          prevRed = currentRed;
+          prevGreen = currentGreen;
+          prevBlue = currentBlue;
+        }
+        
+        if (actualState.temp >= 0) {
+          // Convert Kelvin to mireds
+          currentTemperature = 1000000 / actualState.temp;
+          prevTemperature = currentTemperature;
+        }
+        
+        // Save the initial state for future use
+        saveSettings();
+      } else {
+        Serial.printf("Failed to read initial state for bulb %s: %s\n", 
+                      wizBulb.ip.c_str(), actualState.errorMessage.c_str());
       }
     } else {
-      Serial.printf("Failed to read initial state for bulb %s: %s\n", 
-                    wizBulb.ip.c_str(), actualState.errorMessage.c_str());
+      Serial.printf("Loaded saved settings for bulb %s\n", wizBulb.mac.c_str());
+      // Restore the saved settings to the WiZ bulb
+      restoreSettingsToWizBulb();
     }
     
     // Convert Kelvin range to mireds for ZigbeeHueLight constructor
@@ -154,6 +276,9 @@ public:
       Serial.printf("  → Temperature mode: %d mireds, RGB set to -1\n", temperature);
     }
     
+    // Mark settings as needing to be saved (rate limited)
+    hasPendingSettingsSave = true;
+    
     hasPendingUpdate = true;
   }
   
@@ -175,6 +300,13 @@ public:
       sendToWizBulb();
       hasPendingUpdate = false;
       lastCommandTime = currentTime;
+    }
+    
+    // Save settings if pending and rate limit allows
+    if (hasPendingSettingsSave && (currentTime - lastSettingsSave >= SETTINGS_SAVE_INTERVAL)) {
+      saveSettings();
+      hasPendingSettingsSave = false;
+      lastSettingsSave = currentTime;
     }
   }
   
