@@ -688,7 +688,7 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
         //Serial.printf("  Control command sent to %s\n", deviceIP.toString().c_str());                        
         return true;
     } else {
-        Serial.printf("  Failed to send control command to %s after %d attempts (TX buffer overflow)\n", 
+        Serial.printf("  Failed to send control command to %s after %d attempts\n", 
                      deviceIP.toString().c_str(), MAX_UDP_RETRIES);
         return false;
     }
