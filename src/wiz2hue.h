@@ -87,11 +87,18 @@ struct WizBulbInfo {
 
 IPAddress wifi_connect(int pin_to_blink, int button);
 IPAddress broadcastIP();
+bool checkWiFiConnection();
 
 void setup_lights(const std::vector<WizBulbInfo>& bulbs);
 void hue_connect(int pin_to_blink, int button, const std::vector<WizBulbInfo>& bulbs = std::vector<WizBulbInfo>());
 void hue_reset();
 void processLightCommands();
+bool checkZigbeeConnection();
+bool checkWizBulbHealth();
+
+// WiZ bulb health monitoring globals
+extern int wizBulbFailureCount;
+extern const int MAX_WIZ_FAILURES;
 
 // System reset functions
 void checkForReset(int button);

@@ -21,6 +21,14 @@ uint8_t button = BOOT_PIN;
 // Global storage for discovered bulbs
 std::vector<WizBulbInfo> globalDiscoveredBulbs;
 
+// Connection monitoring variables
+unsigned long lastConnectionCheck = 0;
+unsigned long lastWiFiCheck = 0;
+unsigned long lastZigbeeCheck = 0;
+const unsigned long CONNECTION_CHECK_INTERVAL = 30000;  // 30 seconds
+const unsigned long WIFI_CHECK_INTERVAL = 30000;       // 30 seconds  
+const unsigned long ZIGBEE_CHECK_INTERVAL = 60000;     // 60 seconds
+
 void setup()
 {
   Serial.begin(115200);
@@ -142,6 +150,40 @@ void resetSystem()
     ESP.restart();
 }
 
+void checkConnections() {
+  unsigned long currentTime = millis();
+  
+  // Check WiFi connection
+  if (currentTime - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
+    if (!checkWiFiConnection()) {
+      Serial.println("WiFi monitoring detected connection loss - restarting system");
+      delay(1000);
+      ESP.restart();
+    }
+    lastWiFiCheck = currentTime;
+  }
+  
+  // Check Zigbee connection
+  if (currentTime - lastZigbeeCheck >= ZIGBEE_CHECK_INTERVAL) {
+    if (!checkZigbeeConnection()) {
+      Serial.println("Zigbee monitoring detected connection loss - restarting system");
+      delay(1000);
+      ESP.restart();
+    }
+    lastZigbeeCheck = currentTime;
+  }
+  
+  // Check WiZ bulb health
+  if (currentTime - lastConnectionCheck >= CONNECTION_CHECK_INTERVAL) {
+    if (!checkWizBulbHealth()) {
+      Serial.println("WiZ bulb health critical - restarting system");
+      delay(1000);
+      ESP.restart();
+    }
+    lastConnectionCheck = currentTime;
+  }
+}
+
 void loop()
 {
   ledDigital(&ledBuiltinLeft, LED_BUILTIN_PERIOD, LED_BUILTIN, SLEEP);
@@ -149,6 +191,9 @@ void loop()
 
   // Process queued light commands with rate limiting
   processLightCommands();
+
+  // Monitor connections and restart if needed
+  checkConnections();
 
   checkForReset(button);
 }

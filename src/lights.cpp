@@ -12,11 +12,15 @@
 
 // Forward declarations
 class ZigbeeWizLight;
-static void staticLightChangeCallback(bool state, uint8_t endpoint, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature);
+static void staticLightChangeCallback(bool state, uint8_t endpoint, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature, esp_zb_zcl_color_control_color_mode_t color_mode);
 static void staticIdentifyCallback(uint16_t time);
 
 // Global mapping
 static std::map<uint8_t, ZigbeeWizLight*> endpointToLight;
+
+// WiZ bulb health monitoring
+int wizBulbFailureCount = 0;
+const int MAX_WIZ_FAILURES = 10;
 
 // Class to manage Zigbee-WiZ light pair
 class ZigbeeWizLight {
@@ -239,15 +243,22 @@ public:
   const WizBulbInfo& getWizBulb() const {
     return wizBulb;
   }
-  
-  void onLightChangeCallback(bool state, uint8_t ep, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature) {
+  void onLightChangeCallback(bool state, uint8_t ep, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature, esp_zb_zcl_color_control_color_mode_t color_mode) {
     // Optional debug output - uncomment to enable detailed logging
-    // Serial.printf("onLightChange EP:%d State:%s RGB:(%d,%d,%d) Level:%d Temp:%d mireds\n", 
-    //               ep, state ? "ON" : "OFF", red, green, blue, level, temperature);
+    Serial.printf("onLightChange EP:%d State:%s RGB:(%d,%d,%d) Level:%d Temp:%d mireds Mode:%d\n", 
+                  ep, state ? "ON" : "OFF", red, green, blue, level, temperature, color_mode);
     
     // Detect what changed to send only relevant parameters
     bool rgbChanged = (red != prevRed || green != prevGreen || blue != prevBlue);
     bool tempChanged = (temperature != prevTemperature);
+    if (color_mode == ESP_ZB_ZCL_COLOR_CONTROL_COLOR_MODE_HUE_SATURATION || color_mode == ESP_ZB_ZCL_COLOR_CONTROL_COLOR_MODE_CURRENT_X_Y) {
+      rgbChanged = true;
+      tempChanged = false;
+    } else if (color_mode == ESP_ZB_ZCL_COLOR_CONTROL_COLOR_MODE_TEMPERATURE) {
+      rgbChanged = false;
+      tempChanged = true;
+    }
+
     
     // Update previous state for next comparison
     prevRed = red;
@@ -473,10 +484,10 @@ es_zb_hue_light_type_t mapBulbToZigbeeType(const WizBulbInfo& bulb) {
 }
 
 // Static callback implementations
-static void staticLightChangeCallback(bool state, uint8_t endpoint, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature) {
+static void staticLightChangeCallback(bool state, uint8_t endpoint, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature, esp_zb_zcl_color_control_color_mode_t color_mode) {
   auto it = endpointToLight.find(endpoint);
   if (it != endpointToLight.end()) {
-    it->second->onLightChangeCallback(state, endpoint, red, green, blue, level, temperature);
+    it->second->onLightChangeCallback(state, endpoint, red, green, blue, level, temperature, color_mode);
   } else {
     Serial.printf("ERROR: No ZigbeeWizLight found for endpoint %d\n", endpoint);
   }
@@ -498,6 +509,22 @@ void processLightCommands()
 void hue_reset()
 {
   Zigbee.factoryReset();
+}
+
+bool checkZigbeeConnection() {
+  if (!Zigbee.connected()) {
+    Serial.println("Zigbee connection lost - restart required");
+    return false;
+  }
+  return true;
+}
+
+bool checkWizBulbHealth() {
+  if (wizBulbFailureCount >= MAX_WIZ_FAILURES) {
+    Serial.printf("WiZ bulb health critical - %d consecutive failures\n", wizBulbFailureCount);
+    return false;
+  }
+  return true;
 }
 
 void setup_lights(const std::vector<WizBulbInfo>& bulbs)

@@ -722,7 +722,18 @@ bool setBulbState(const WizBulbInfo& bulbInfo, const WizBulbState& state)
     }
     
     // Use the bulb's known capabilities directly
-    return setBulbStateInternal(deviceIP, state, bulbInfo.features);
+    bool success = setBulbStateInternal(deviceIP, state, bulbInfo.features);
+    
+    // Track failures for health monitoring
+    
+    if (!success) {
+        wizBulbFailureCount++;
+        Serial.printf("WiZ bulb command failed. Failure count: %d/%d\n", wizBulbFailureCount, MAX_WIZ_FAILURES);
+    } else {
+        wizBulbFailureCount = 0; // Reset on success
+    }
+    
+    return success;
 }
 
 WizBulbState getBulbState(const WizBulbInfo& bulbInfo)

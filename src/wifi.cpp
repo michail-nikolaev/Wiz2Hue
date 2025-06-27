@@ -76,4 +76,33 @@ IPAddress wifi_connect(int pin_to_blink, int button)
 
   return WiFi.localIP();
 }
+
+bool checkWiFiConnection() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi connection lost - attempting reconnection");
+    
+    // Try quick reconnection first
+    WiFi.disconnect(true);
+    delay(1000);
+    WiFi.begin(ssid, password);
+    
+    // Wait up to 10 seconds for reconnection
+    unsigned long startTime = millis();
+    const unsigned long RECONNECT_TIMEOUT = 10000;
+    
+    while (WiFi.status() != WL_CONNECTED && (millis() - startTime) < RECONNECT_TIMEOUT) {
+      delay(500);
+      Serial.print(".");
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.printf("\nWiFi reconnected - IP: %s\n", WiFi.localIP().toString().c_str());
+      return true;
+    } else {
+      Serial.println("\nWiFi reconnection failed - system restart required");
+      return false;
+    }
+  }
+  return true;
+}
  
