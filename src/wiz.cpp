@@ -11,6 +11,19 @@ const int BROADCAST_DELAY = 500;           // Delay between broadcasts in ms
 const int SOCKET_TIMEOUT = 1000;           // Socket receive timeout in ms
 const int RETRY_BROADCAST_INTERVAL = 3000; // Retry broadcast every 3 seconds
 
+// Global UDP transmission rate limiting to prevent buffer overflow
+static unsigned long lastGlobalUdpSend = 0;
+const int GLOBAL_UDP_DELAY = 20;           // 20ms minimum between any UDP sends
+
+// Helper function to enforce global UDP rate limiting
+static void enforceGlobalUdpDelay() {
+    unsigned long timeSinceLastSend = millis() - lastGlobalUdpSend;
+    if (timeSinceLastSend < GLOBAL_UDP_DELAY) {
+        delay(GLOBAL_UDP_DELAY - timeSinceLastSend);
+    }
+    lastGlobalUdpSend = millis();
+}
+
 std::vector<WizBulbInfo> scanForWiz(IPAddress broadcastIP)
 {
     std::vector<WizBulbInfo> discoveredBulbs;
@@ -42,7 +55,12 @@ std::vector<WizBulbInfo> scanForWiz(IPAddress broadcastIP)
 
         udp.beginPacket(broadcastIP, WIZ_PORT);
         udp.print(discoveryMessage);
-        udp.endPacket();
+        bool sent = udp.endPacket();
+        
+        if (!sent) {
+            Serial.printf("  Warning: Broadcast attempt %d failed (TX buffer full)\n", attempt);
+            delay(100); // Extra delay on failure
+        }
 
         // Add delay between broadcasts (except last one)
         if (attempt < BROADCAST_ATTEMPTS)
@@ -153,7 +171,11 @@ std::vector<WizBulbInfo> scanForWiz(IPAddress broadcastIP)
 
                     udp.beginPacket(broadcastIP, WIZ_PORT);
                     udp.print(discoveryMessage);
-                    udp.endPacket();
+                    bool sent = udp.endPacket();
+                    
+                    if (!sent) {
+                        Serial.println("  Warning: Retry broadcast failed (TX buffer full)");
+                    }
 
                     lastRetryBroadcast = millis();
                 }
@@ -341,10 +363,15 @@ WizBulbInfo getSystemConfig(IPAddress deviceIP)
             delay(CONFIG_RETRY_DELAY);
         }
 
-        // Send request to specific device
+        // Send request to specific device with error checking
         udp.beginPacket(deviceIP, WIZ_PORT);
         udp.print(configMessage);
-        udp.endPacket();
+        bool sent = udp.endPacket();
+        
+        if (!sent) {
+            Serial.printf("  Warning: Config request attempt %d failed (TX buffer full)\n", attempt);
+            continue; // Skip to next attempt
+        }
 
         unsigned long startTime = millis();
 
@@ -475,10 +502,15 @@ WizBulbState getBulbState(IPAddress deviceIP)
             delay(STATE_RETRY_DELAY);
         }
 
-        // Send request to specific device
+        // Send request to specific device with error checking
         udp.beginPacket(deviceIP, WIZ_PORT);
         udp.print(stateMessage);
-        udp.endPacket();
+        bool sent = udp.endPacket();
+        
+        if (!sent) {
+            Serial.printf("  Warning: State request attempt %d failed (TX buffer full)\n", attempt);
+            continue; // Skip to next attempt
+        }
 
         unsigned long startTime = millis();
 
@@ -628,10 +660,27 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
     // Serial.printf("  Requested state: %s\n", wizBulbStateToJson(state).c_str());
     // Serial.printf("  Control message: %s\n", controlMessage.c_str());
 
-    // Send control command - WiZ bulbs typically don't send acknowledgment responses to setPilot
-    udp.beginPacket(deviceIP, WIZ_PORT);
-    udp.print(controlMessage);
-    bool packetSent = udp.endPacket();
+    // Send control command with retry mechanism for buffer overflow protection
+    const int MAX_UDP_RETRIES = 5;
+    const int UDP_RETRY_DELAY = 50; // 50ms delay between retries
+    bool packetSent = false;
+    
+    for (int attempt = 1; attempt <= MAX_UDP_RETRIES && !packetSent; attempt++) {
+        // Enforce global rate limiting before sending
+        enforceGlobalUdpDelay();
+        
+        udp.beginPacket(deviceIP, WIZ_PORT);
+        udp.print(controlMessage);
+        packetSent = udp.endPacket();
+        
+        if (!packetSent) {
+            Serial.printf("  UDP send failed (attempt %d/%d) - TX buffers full, retrying...\n", 
+                         attempt, MAX_UDP_RETRIES);
+            if (attempt < MAX_UDP_RETRIES) {
+                delay(UDP_RETRY_DELAY);
+            }
+        }
+    }
     
     udp.stop();
     
@@ -639,7 +688,8 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
         //Serial.printf("  Control command sent to %s\n", deviceIP.toString().c_str());                        
         return true;
     } else {
-        Serial.printf("  Failed to send control command to %s\n", deviceIP.toString().c_str());
+        Serial.printf("  Failed to send control command to %s after %d attempts (TX buffer overflow)\n", 
+                     deviceIP.toString().c_str(), MAX_UDP_RETRIES);
         return false;
     }
 }
