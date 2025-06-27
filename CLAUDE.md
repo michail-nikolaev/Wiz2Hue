@@ -15,6 +15,7 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Capability Detection**: Parses module names to determine bulb types (RGB, RGBW, TW, DW, Socket, Fan)
 - **State Management**: Reads/writes bulb state with capability-aware filtering
 - **JSON Serialization**: Complete bidirectional conversion for debugging and data persistence
+- **Health Monitoring**: Tracks communication failures and triggers system restart on excessive failures
 
 **Zigbee Bridge (`src/lights.cpp`)**
 - **Dynamic Light Creation**: Creates Zigbee lights dynamically based on discovered WiZ bulbs
@@ -23,15 +24,18 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **State Synchronization**: Reads actual WiZ bulb state on startup for accurate initial state
 - **Zigbee Protocol**: ESP32-C6 Zigbee stack integration for network communication
 - **Device Registration**: Manages device pairing and network joining
+- **Network Monitoring**: Periodic Zigbee connection status checks with automatic restart on failure
 
 **System Control (`src/main.cpp`)**
 - **Main Application Logic**: Setup, loop, and system coordination
 - **Reset System**: Unified reset with visual feedback and reliable filesystem clearing
 - **Button Handling**: Reset available during all connection phases (WiFi, Zigbee, setup, main loop)
+- **Connection Monitoring**: Automatic monitoring and restart on WiFi, Zigbee, or WiZ failures
 
 **Network Layer (`src/wifi.cpp`)**
 - **WiFi Management**: Connects to local network for WiZ discovery
 - **Broadcast IP Discovery**: Automatically determines network broadcast address
+- **Connection Monitoring**: Periodic WiFi status checks with automatic reconnection attempts
 
 **Filesystem Management (`src/fs.cpp`)**
 - **Persistent Storage**: LittleFS operations for light caching and configuration
@@ -146,4 +150,19 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Core Dump**: 64KB (crash debugging)
 - **System**: 32KB (NVS + PHY calibration)
 
-The system performs automatic WiZ discovery with intelligent caching - uses stored lights for fast startup, network discovery as fallback, creates dynamic Zigbee lights with individual rate limiting and state management, and outputs comprehensive JSON logs for monitoring and debugging.
+## Connection Monitoring & Recovery
+
+**Automatic Monitoring System**:
+- **WiFi Monitoring**: Checks connection status every 30 seconds with automatic reconnection attempts (10-second timeout)
+- **Zigbee Monitoring**: Verifies network connectivity every 60 seconds  
+- **WiZ Health Tracking**: Monitors communication failures with 10-failure threshold before restart
+- **System Recovery**: Automatic ESP.restart() on connection loss or critical health issues
+- **Non-blocking Design**: All monitoring uses millis() timing to avoid interfering with light command processing
+
+**Failure Recovery Patterns**:
+1. **WiFi Disconnection**: Attempts reconnection, restarts system if failed
+2. **Zigbee Network Loss**: Immediate system restart to rejoin network
+3. **WiZ Communication Issues**: Tracks consecutive failures, restarts after threshold exceeded
+4. **Manual Reset**: 3+ second button hold for immediate factory reset and restart
+
+The system performs automatic WiZ discovery with intelligent caching - uses stored lights for fast startup, network discovery as fallback, creates dynamic Zigbee lights with individual rate limiting and state management, comprehensive connection monitoring with automatic recovery, and outputs structured JSON logs for monitoring and debugging.

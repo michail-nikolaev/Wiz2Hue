@@ -4,16 +4,33 @@
 
 Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-compatible devices for Philips Hue ecosystems. The project enables WiZ WiFi lights to be controlled through Hue bridges, apps, and smart home systems that support Zigbee devices.
 
+## Features
+
+- **Automatic Discovery**: Finds and configures WiZ lights on your network
+- **Dynamic Zigbee Bridge**: Creates appropriate Zigbee device types based on WiZ bulb capabilities  
+- **Connection Monitoring**: Automatic monitoring and recovery from WiFi, Zigbee, or WiZ communication failures
+- **Persistent Storage**: Caches discovered lights for fast startup
+- **Individual Rate Limiting**: Per-light command throttling to prevent overload
+- **Smart Color Handling**: Intelligent RGB vs temperature mode detection and switching
+
 ## Hardware Requirements
 
 - **ESP32-C6** development board (Seeed XIAO ESP32-C6 recommended, other ESP32-C6 models may work)
 
-## System Reset
+## System Reset & Recovery
 
+**Manual Reset:**
 Hold the boot button for 3+ seconds while observing fast LED blinking:
 - Clears cached light configurations
 - Resets Zigbee network settings
 - Forces device restart for clean state
+
+**Automatic Recovery:**
+The system continuously monitors connections and automatically restarts when needed:
+- **WiFi monitoring** every 30 seconds with reconnection attempts
+- **Zigbee monitoring** every 60 seconds  
+- **WiZ communication health** tracking with failure threshold
+- **System restart** triggered on connection loss or critical failures
 
 ## Development
 
