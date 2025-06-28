@@ -20,8 +20,8 @@ void ledDigital(int *left, int period, int pin, int sleep)
 void ledAnalog(int *left, int period, int pin, int sleep)
 {
   *left -= sleep;
-  float brigtness = (float)abs(*left) / period;
-  analogWrite(pin, brigtness * 255);
+  float brightness = (float)abs(*left) / period;
+  analogWrite(pin, brightness * 255);
   if (*left < -period)
   {
     *left = period;
