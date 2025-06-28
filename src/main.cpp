@@ -32,7 +32,7 @@ const unsigned long ZIGBEE_CHECK_INTERVAL = 60000;     // 60 seconds
 void setup()
 {
   Serial.begin(115200);
-  delay(5000);
+  // delay(5000);
   // hue_reset();
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(RED_PIN, OUTPUT);

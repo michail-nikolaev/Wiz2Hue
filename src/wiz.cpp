@@ -205,10 +205,10 @@ std::vector<WizBulbInfo> scanForWiz(IPAddress broadcastIP)
             
             if (!bulbInfo.isValid) {
                 Serial.printf("  Failed to get configuration: %s\n", bulbInfo.errorMessage.c_str());
-            }
-            
-            // Add bulb to results regardless of configuration success
-            discoveredBulbs.push_back(bulbInfo);
+            } else {
+                // Add bulb to results regardless of configuration success
+                discoveredBulbs.push_back(bulbInfo);
+            }            
 
             // Add delay between config requests to prevent overwhelming devices
             if (i < discoveredIPs.size() - 1)
@@ -692,24 +692,6 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
                      deviceIP.toString().c_str(), MAX_UDP_RETRIES);
         return false;
     }
-}
-
-bool setBulbState(IPAddress deviceIP, const WizBulbState& state)
-{
-    // First get the bulb info to check capabilities
-    Serial.printf("Getting bulb capabilities for %s...\n", deviceIP.toString().c_str());
-    WizBulbInfo bulbInfo = getSystemConfig(deviceIP);
-    
-    if (!bulbInfo.isValid) {
-        Serial.printf("Failed to get bulb capabilities for %s: %s\n", 
-                     deviceIP.toString().c_str(), bulbInfo.errorMessage.c_str());
-        // Use default features (basic brightness only) as fallback
-        Features defaultFeatures;
-        defaultFeatures.brightness = true;
-        return setBulbStateInternal(deviceIP, state, defaultFeatures);
-    }
-    
-    return setBulbStateInternal(deviceIP, state, bulbInfo.features);
 }
 
 bool setBulbState(const WizBulbInfo& bulbInfo, const WizBulbState& state)

@@ -112,7 +112,6 @@ WizBulbInfo getSystemConfig(IPAddress deviceIP);
 
 // State management functions
 WizBulbState getBulbState(IPAddress deviceIP);
-bool setBulbState(IPAddress deviceIP, const WizBulbState& state);
 bool setBulbState(const WizBulbInfo& bulbInfo, const WizBulbState& state);
 
 // Convenience functions for WizBulbInfo state management
