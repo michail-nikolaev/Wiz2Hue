@@ -898,22 +898,73 @@ WizBulbInfo wizBulbInfoFromJson(const String& json)
 }
 
 
+std::vector<WizBulbInfo> updateBulbIPs(const std::vector<WizBulbInfo>& cachedBulbs, const std::vector<WizBulbInfo>& discoveredBulbs)
+{
+    std::vector<WizBulbInfo> updatedBulbs = cachedBulbs;
+    bool anyUpdated = false;
+    
+    Serial.printf("Updating IP addresses for %d cached bulbs using %d discovered bulbs\n", cachedBulbs.size(), discoveredBulbs.size());
+    
+    for (size_t i = 0; i < updatedBulbs.size(); i++) {
+        WizBulbInfo& cached = updatedBulbs[i];
+        
+        // Find matching bulb by MAC address
+        for (const WizBulbInfo& discovered : discoveredBulbs) {
+            if (discovered.mac == cached.mac && !discovered.mac.isEmpty()) {
+                if (discovered.ip != cached.ip) {
+                    Serial.printf("Updating IP for MAC %s: %s -> %s\n", 
+                                 cached.mac.c_str(), cached.ip.c_str(), discovered.ip.c_str());
+                    cached.ip = discovered.ip;
+                    anyUpdated = true;
+                } else {
+                    Serial.printf("IP unchanged for MAC %s: %s\n", cached.mac.c_str(), cached.ip.c_str());
+                }
+                break;
+            }
+        }
+    }
+    
+    if (anyUpdated) {
+        Serial.println("IP addresses updated, saving to cache");
+        if (saveLightsToFile(updatedBulbs)) {
+            Serial.println("Successfully updated and saved lights cache");
+        } else {
+            Serial.println("Failed to save updated lights cache");
+        }
+    } else {
+        Serial.println("No IP address changes detected");
+    }
+    
+    return updatedBulbs;
+}
+
 std::vector<WizBulbInfo> discoverOrLoadLights(IPAddress broadcastIP, bool* fromCache)
 {
     Serial.println("=== Smart Light Discovery ===");
     
     // Try to load from file first
-    std::vector<WizBulbInfo> bulbs = loadLightsFromFile();
+    std::vector<WizBulbInfo> cachedBulbs = loadLightsFromFile();
     
-    if (bulbs.size() > 0) {
-        Serial.printf("Using %d cached lights from file\n", bulbs.size());
+    if (cachedBulbs.size() > 0) {
+        Serial.printf("Found %d cached lights, checking for IP updates...\n", cachedBulbs.size());
         if (fromCache) *fromCache = true;
-        return bulbs;
+        
+        // Perform discovery to check for IP changes
+        std::vector<WizBulbInfo> discoveredBulbs = scanForWiz(broadcastIP);
+        
+        if (discoveredBulbs.size() > 0) {
+            // Update cached bulbs with any new IP addresses
+            std::vector<WizBulbInfo> updatedBulbs = updateBulbIPs(cachedBulbs, discoveredBulbs);                        
+            return updatedBulbs;
+        } else {
+            Serial.println("No bulbs discovered during IP update check, using cached lights as-is");
+            return cachedBulbs;
+        }
     }
     
     // No cached lights, perform discovery
     Serial.println("No cached lights found, performing network discovery...");
-    bulbs = scanForWiz(broadcastIP);
+    std::vector<WizBulbInfo> bulbs = scanForWiz(broadcastIP);
     if (fromCache) *fromCache = false;
     
     if (bulbs.size() > 0) {

@@ -12,6 +12,7 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 
 **WiZ Light Management (`src/wiz.cpp`, `src/wiz2hue.h`)**
 - **Discovery System**: Broadcasts UDP packets to find WiZ lights on local network
+- **IP Address Management**: Automatically updates cached light IP addresses by MAC address matching
 - **Capability Detection**: Parses module names to determine bulb types (RGB, RGBW, TW, DW, Socket, Fan)
 - **State Management**: Reads/writes bulb state with capability-aware filtering
 - **JSON Serialization**: Complete bidirectional conversion for debugging and data persistence
@@ -52,21 +53,22 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 
 ### State Management Pattern
 
-1. **Discovery**: `discoverOrLoadLights()` tries cache first, falls back to network scan
-2. **Persistent Storage**: Discovered lights cached in `/lights.json` on LittleFS
-3. **Dynamic Zigbee Creation**: `setup_lights()` creates ZigbeeWizLight objects for each discovered WiZ bulb
-4. **Endpoint Assignment**: Consistent endpoint IDs (starting from 10) based on MAC address sorting
-5. **Initial State Sync**: Each ZigbeeWizLight reads actual WiZ bulb state on startup
-6. **State Reading**: `getBulbState()` queries current device state via UDP "getPilot"
-7. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters
-8. **Rate Limited Updates**: Individual 100ms rate limiting per light with 10-second periodic refresh  
-9. **Smart Color Handling**: Detects RGB vs temperature parameter changes and sends only relevant commands
-10. **JSON Debug**: All operations output structured JSON for debugging
+1. **Discovery**: `discoverOrLoadLights()` tries cache first, performs IP update check, falls back to network scan
+2. **IP Address Updates**: `updateBulbIPs()` matches cached and discovered bulbs by MAC address and updates IPs
+3. **Persistent Storage**: Discovered lights cached in `/lights.json` on LittleFS with automatic IP updates
+4. **Dynamic Zigbee Creation**: `setup_lights()` creates ZigbeeWizLight objects for each discovered WiZ bulb
+5. **Endpoint Assignment**: Consistent endpoint IDs (starting from 10) based on MAC address sorting
+6. **Initial State Sync**: Each ZigbeeWizLight reads actual WiZ bulb state on startup
+7. **State Reading**: `getBulbState()` queries current device state via UDP "getPilot"
+8. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters
+9. **Rate Limited Updates**: Individual 100ms rate limiting per light with 10-second periodic refresh  
+10. **Smart Color Handling**: Detects RGB vs temperature parameter changes and sends only relevant commands
+11. **JSON Debug**: All operations output structured JSON for debugging
 
 ### File System Operations
 
-- **Cache Management**: Lights stored in `/lights.json` for fast startup
-- **Smart Discovery**: Uses cached lights if available, network discovery as fallback
+- **Cache Management**: Lights stored in `/lights.json` for fast startup with automatic IP address updates
+- **Smart Discovery**: Uses cached lights if available, performs IP update check, network discovery as fallback
 - **Unified Reset**: `resetSystem()` clears both LittleFS cache and Zigbee network
 - **Reliable Persistence**: `LittleFS.end()` forces write buffer flush before system reset
 - **Filesystem Sync**: Explicit unmount/remount cycle ensures data integrity during resets
@@ -131,6 +133,22 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Optimized Callbacks**: Minimal Serial output in callbacks to reduce processing lag (optional debug mode available)
 **Color Temperature**: Proper mireds/Kelvin conversions with validation and range clamping to prevent invalid values
 **Test Mode Enhancement**: During Zigbee connection, cycles through random colors and temperatures for visual feedback
+
+### IP Address Management
+
+**Dynamic IP Updates**: The system automatically handles WiZ lights that change IP addresses after router restarts or DHCP renewals:
+
+- **MAC-based Matching**: Uses MAC addresses as unique identifiers to track lights across IP changes
+- **Boot-time Discovery**: When cached lights exist, performs network discovery to check for IP changes
+- **Selective Updates**: Only updates IP addresses that have actually changed, preserving other cached data
+- **Conditional Saving**: Cache file is only updated when IP address changes are detected
+- **Fallback Protection**: If discovery fails, uses cached lights as-is to maintain system operation
+
+**Implementation Details**:
+- `updateBulbIPs()` function compares cached vs discovered bulbs by MAC address (`src/wiz.cpp:901-939`)
+- `discoverOrLoadLights()` orchestrates the IP update process during system startup (`src/wiz.cpp:941-984`)
+- Detailed logging shows which bulbs had IP updates and which remained unchanged
+- No unnecessary file system writes when no changes are detected
 
 ## Configuration
 
