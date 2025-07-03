@@ -244,6 +244,10 @@ public:
     return wizBulb;
   }
   void onLightChangeCallback(bool state, uint8_t ep, uint8_t red, uint8_t green, uint8_t blue, uint8_t level, uint16_t temperature, esp_zb_zcl_color_control_color_mode_t color_mode) {
+    if (ep != endpoint) {
+      Serial.printf("WARNING: Received command for EP:%d but this is EP:%d\n", ep, endpoint);
+      return; // Ignore commands for wrong endpoint
+    }
     // Optional debug output - uncomment to enable detailed logging
     Serial.printf("onLightChange EP:%d State:%s RGB:(%d,%d,%d) Level:%d Temp:%d mireds Mode:%d\n", 
                   ep, state ? "ON" : "OFF", red, green, blue, level, temperature, color_mode);
@@ -327,8 +331,8 @@ private:
     WizBulbState wizState;
     wizState.state = currentState;
     
-    Serial.printf("  sendToWizBulb: current RGB(%d,%d,%d), temp %d\n", 
-                  currentRed, currentGreen, currentBlue, currentTemperature);
+    Serial.printf("  sendToWizBulb (%s): current RGB(%d,%d,%d), temp %d\n", 
+                  wizBulb.ip.c_str(), currentRed, currentGreen, currentBlue, currentTemperature);
     
     if (currentState && wizBulb.features.brightness) {
       wizState.dimming = map(currentLevel, 0, 255, 0, 100);
