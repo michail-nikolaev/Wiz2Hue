@@ -11,10 +11,10 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 ### Core Components
 
 **WiZ Light Management (`src/wiz.cpp`, `src/wiz2hue.h`)**
-- **Discovery System**: Broadcasts UDP packets to find WiZ lights on local network
+- **Discovery System**: Broadcasts UDP packets to find WiZ lights on local network using AsyncUDP
 - **IP Address Management**: Automatically updates cached light IP addresses by MAC address matching
 - **Capability Detection**: Parses module names to determine bulb types (RGB, RGBW, TW, DW, Socket, Fan)
-- **State Management**: Reads/writes bulb state with capability-aware filtering
+- **State Management**: Reads/writes bulb state with capability-aware filtering using AsyncUDP for improved performance
 - **JSON Serialization**: Complete bidirectional conversion for debugging and data persistence
 - **Health Monitoring**: Tracks communication failures and triggers system restart on excessive failures
 
@@ -59,8 +59,8 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 4. **Dynamic Zigbee Creation**: `setup_lights()` creates ZigbeeWizLight objects for each discovered WiZ bulb
 5. **Endpoint Assignment**: Consistent endpoint IDs (starting from 10) based on MAC address sorting
 6. **Initial State Sync**: Each ZigbeeWizLight reads actual WiZ bulb state on startup
-7. **State Reading**: `getBulbState()` queries current device state via UDP "getPilot"
-8. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters
+7. **State Reading**: `getBulbState()` queries current device state via AsyncUDP "getPilot" with callback-based response handling
+8. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters via AsyncUDP
 9. **Rate Limited Updates**: Individual 100ms rate limiting per light with 10-second periodic refresh  
 10. **Smart Color Handling**: Detects RGB vs temperature parameter changes and sends only relevant commands
 11. **JSON Debug**: All operations output structured JSON for debugging
@@ -92,6 +92,7 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 
 **Core Libraries:**
 - `bblanchon/ArduinoJson@^7.0.0`: JSON parsing and generation
+- `esphome/AsyncUDP-ESP32@^2.0.0`: Asynchronous UDP communication library for improved performance
 - ESP32 Arduino LittleFS: Built-in filesystem for persistent storage
 - ESP32 Zigbee SDK (via managed components)
 - ESP WiFi/UDP stack
@@ -102,7 +103,7 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 
 ## Development Notes
 
-**WiZ Protocol**: Uses UDP port 38899 with JSON-based commands ("getPilot", "setPilot", "getSystemConfig")
+**WiZ Protocol**: Uses UDP port 38899 with JSON-based commands ("getPilot", "setPilot", "getSystemConfig") via AsyncUDP for improved performance
 **Capability Filtering**: Only sends supported parameters to prevent device errors (e.g., no RGB commands to white-only bulbs)
 **State Defaults**: Use -1 for unknown/unset values throughout `WizBulbState` structure
 **JSON Output**: All debug information uses structured JSON format for parsing and analysis

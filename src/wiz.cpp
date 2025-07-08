@@ -1,5 +1,6 @@
 #include "wiz2hue.h"
 #include <WiFiUdp.h>
+#include <AsyncUDP.h>
 #include <ArduinoJson.h>
 #include <vector>
 
@@ -339,14 +340,7 @@ WizBulbInfo getSystemConfig(IPAddress deviceIP)
     WizBulbInfo bulbInfo;
     bulbInfo.ip = deviceIP.toString();
     
-    WiFiUDP udp;
-
-    if (!udp.begin(0))
-    { // Use random port
-        Serial.println("Failed to start UDP for system config request");
-        bulbInfo.errorMessage = "Failed to start UDP";
-        return bulbInfo;
-    }
+    AsyncUDP udp;
 
     // System config request
     String configMessage = "{\"method\":\"getSystemConfig\",\"params\":{}}";
@@ -354,6 +348,93 @@ WizBulbInfo getSystemConfig(IPAddress deviceIP)
     const int CONFIG_RETRY_DELAY = 500; // Delay between retries
 
     bool configReceived = false;
+    bool responseReceived = false;
+
+    // Set up callback for received packets
+    udp.onPacket([&](AsyncUDPPacket packet) {
+        if (configReceived) return; // Already got response
+        
+        // Limit response size to prevent crashes
+        const int MAX_RESPONSE_SIZE = 800;
+        char response[MAX_RESPONSE_SIZE];
+        int len = min((int)packet.length(), MAX_RESPONSE_SIZE - 1);
+        memcpy(response, packet.data(), len);
+        response[len] = '\0';
+
+        Serial.println("System Configuration:");
+
+        // Use JsonDocument to save memory
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, response);
+
+        if (!error)
+        {
+            if (doc["result"].is<JsonObject>())
+            {
+                JsonObject result = doc["result"];
+
+                // Extract key information safely
+                bulbInfo.moduleName = result["moduleName"] | "Unknown";
+                bulbInfo.fwVersion = result["fwVersion"] | "Unknown";
+                bulbInfo.mac = result["mac"] | "Unknown";
+                bulbInfo.rssi = result["rssi"] | 0;
+                bulbInfo.src = result["src"] | "Unknown";
+                bulbInfo.homeId = result["homeId"] | "Unknown";
+                bulbInfo.roomId = result["roomId"] | "Unknown";
+
+                // Determine bulb class and features
+                bulbInfo.bulbClass = determineBulbClass(bulbInfo.moduleName);
+                bulbInfo.features = determineBulbFeatures(bulbInfo.bulbClass);
+                bulbInfo.isValid = true;
+
+                // Print information as JSON
+                Serial.printf("%s\n", wizBulbInfoToJson(bulbInfo).c_str());
+
+                // Only print full response if it's reasonably sized
+                if (strlen(response) < 400)
+                {
+                    Serial.printf("  Full capabilities: %s\n", response);
+                }
+                else
+                {
+                    Serial.println("  Full capabilities: [Response too large to display]");
+                }
+
+                configReceived = true;
+            }
+            else
+            {
+                Serial.println("  Response doesn't contain 'result' field");
+                Serial.printf("  Raw response: %s\n", response);
+                bulbInfo.errorMessage = "Invalid response format";
+                configReceived = true; // Still count as received
+            }
+        }
+        else
+        {
+            Serial.printf("  Failed to parse JSON response: %s\n", error.c_str());
+            bulbInfo.errorMessage = "JSON parse error: " + String(error.c_str());
+            // Only print response if it's not too large
+            if (strlen(response) < 1024)
+            {
+                Serial.printf("  Raw response: %s\n", response);
+            }
+            else
+            {
+                Serial.println("  Raw response: [Too large to display]");
+            }
+            configReceived = true; // Still count as received
+        }
+        
+        responseReceived = true;
+    });
+
+    // Start listening on a random port
+    if (!udp.listen(0)) {
+        Serial.println("Failed to start AsyncUDP for system config request");
+        bulbInfo.errorMessage = "Failed to start AsyncUDP";
+        return bulbInfo;
+    }
 
     for (int attempt = 1; attempt <= CONFIG_ATTEMPTS && !configReceived; attempt++)
     {
@@ -364,103 +445,24 @@ WizBulbInfo getSystemConfig(IPAddress deviceIP)
         }
 
         // Send request to specific device with error checking
-        udp.beginPacket(deviceIP, WIZ_PORT);
-        udp.print(configMessage);
-        bool sent = udp.endPacket();
+        size_t sentBytes = udp.writeTo((const uint8_t*)configMessage.c_str(), configMessage.length(), deviceIP, WIZ_PORT);
         
-        if (!sent) {
-            Serial.printf("  Warning: Config request attempt %d failed (TX buffer full)\n", attempt);
+        if (sentBytes == 0) {
+            Serial.printf("  Warning: Config request attempt %d failed (AsyncUDP send error)\n", attempt);
             continue; // Skip to next attempt
         }
 
         unsigned long startTime = millis();
+        responseReceived = false;
 
         // Wait for response with shorter timeout per attempt
-        while (millis() - startTime < (RESPONSE_TIMEOUT / CONFIG_ATTEMPTS))
+        while (millis() - startTime < (RESPONSE_TIMEOUT / CONFIG_ATTEMPTS) && !responseReceived)
         {
-            int packetSize = udp.parsePacket();
-
-            if (packetSize)
-            {
-                // Limit response size to prevent crashes
-                const int MAX_RESPONSE_SIZE = 800;
-                char response[MAX_RESPONSE_SIZE];
-                int len = udp.read(response, sizeof(response) - 1);
-                if (len >= MAX_RESPONSE_SIZE - 1)
-                {
-                    Serial.println("  Warning: Response truncated due to size");
-                }
-                response[len] = '\0';
-
-                Serial.println("System Configuration:");
-
-                // Use JsonDocument to save memory
-                JsonDocument doc;
-                DeserializationError error = deserializeJson(doc, response);
-
-                if (!error)
-                {
-                    if (doc["result"].is<JsonObject>())
-                    {
-                        JsonObject result = doc["result"];
-
-                        // Extract key information safely
-                        bulbInfo.moduleName = result["moduleName"] | "Unknown";
-                        bulbInfo.fwVersion = result["fwVersion"] | "Unknown";
-                        bulbInfo.mac = result["mac"] | "Unknown";
-                        bulbInfo.rssi = result["rssi"] | 0;
-                        bulbInfo.src = result["src"] | "Unknown";
-                        bulbInfo.homeId = result["homeId"] | "Unknown";
-                        bulbInfo.roomId = result["roomId"] | "Unknown";
-
-                        // Determine bulb class and features
-                        bulbInfo.bulbClass = determineBulbClass(bulbInfo.moduleName);
-                        bulbInfo.features = determineBulbFeatures(bulbInfo.bulbClass);
-                        bulbInfo.isValid = true;
-
-                        // Print information as JSON
-                        Serial.printf("%s\n", wizBulbInfoToJson(bulbInfo).c_str());
-
-                        // Only print full response if it's reasonably sized
-                        if (strlen(response) < 400)
-                        {
-                            Serial.printf("  Full capabilities: %s\n", response);
-                        }
-                        else
-                        {
-                            Serial.println("  Full capabilities: [Response too large to display]");
-                        }
-
-                        configReceived = true;
-                    }
-                    else
-                    {
-                        Serial.println("  Response doesn't contain 'result' field");
-                        Serial.printf("  Raw response: %s\n", response);
-                        bulbInfo.errorMessage = "Invalid response format";
-                        configReceived = true; // Still count as received
-                    }
-                }
-                else
-                {
-                    Serial.printf("  Failed to parse JSON response: %s\n", error.c_str());
-                    bulbInfo.errorMessage = "JSON parse error: " + String(error.c_str());
-                    // Only print response if it's not too large
-                    if (strlen(response) < 1024)
-                    {
-                        Serial.printf("  Raw response: %s\n", response);
-                    }
-                    else
-                    {
-                        Serial.println("  Raw response: [Too large to display]");
-                    }
-                    configReceived = true; // Still count as received
-                }
-
-                break;
-            }
-
             delay(10);
+        }
+
+        if (configReceived) {
+            break;
         }
     }
 
@@ -471,21 +473,14 @@ WizBulbInfo getSystemConfig(IPAddress deviceIP)
         bulbInfo.errorMessage = "Timeout - no response";
     }
 
-    udp.stop();
+    udp.close();
     return bulbInfo;
 }
 
 WizBulbState getBulbState(IPAddress deviceIP)
 {
     WizBulbState bulbState;
-    WiFiUDP udp;
-
-    if (!udp.begin(0))
-    {
-        Serial.println("Failed to start UDP for bulb state request");
-        bulbState.errorMessage = "Failed to start UDP";
-        return bulbState;
-    }
+    AsyncUDP udp;
 
     // State request - getPilot command
     String stateMessage = "{\"method\":\"getPilot\",\"params\":{}}";
@@ -493,6 +488,78 @@ WizBulbState getBulbState(IPAddress deviceIP)
     const int STATE_RETRY_DELAY = 300;
 
     bool stateReceived = false;
+    bool responseReceived = false;
+
+    // Set up callback for received packets
+    udp.onPacket([&](AsyncUDPPacket packet) {
+        if (stateReceived) return; // Already got response
+        
+        const int MAX_RESPONSE_SIZE = 512;
+        char response[MAX_RESPONSE_SIZE];
+        int len = min((int)packet.length(), MAX_RESPONSE_SIZE - 1);
+        memcpy(response, packet.data(), len);
+        response[len] = '\0';
+
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, response);
+
+        if (!error)
+        {
+            if (doc["result"].is<JsonObject>())
+            {
+                JsonObject result = doc["result"];
+
+                // Extract state information
+                bulbState.state = result["state"] | false;
+                bulbState.dimming = result["dimming"] | -1;
+                
+                // Color values
+                bulbState.r = result["r"] | -1;
+                bulbState.g = result["g"] | -1;
+                bulbState.b = result["b"] | -1;
+                bulbState.c = result["c"] | -1;
+                bulbState.w = result["w"] | -1;
+                
+                // Color temperature
+                bulbState.temp = result["temp"] | -1;
+                
+                // Scene and effects
+                bulbState.sceneId = result["sceneId"] | -1;
+                bulbState.speed = result["speed"] | -1;
+                
+                // Fan speed (if present)
+                bulbState.fanspd = result["fanspd"] | -1;
+
+                bulbState.isValid = true;
+                bulbState.lastUpdated = millis();
+
+                Serial.printf(" Bulb State raw response: %s\n", response);
+
+                stateReceived = true;
+            }
+            else
+            {
+                Serial.println("  State response doesn't contain 'result' field");
+                bulbState.errorMessage = "Invalid state response format";
+                stateReceived = true;
+            }
+        }
+        else
+        {
+            Serial.printf("  Failed to parse state JSON: %s\n", error.c_str());
+            bulbState.errorMessage = "JSON parse error: " + String(error.c_str());
+            stateReceived = true;
+        }
+        
+        responseReceived = true;
+    });
+
+    // Start listening on a random port
+    if (!udp.listen(0)) {
+        Serial.println("Failed to start AsyncUDP for bulb state request");
+        bulbState.errorMessage = "Failed to start AsyncUDP";
+        return bulbState;
+    }
 
     for (int attempt = 1; attempt <= STATE_ATTEMPTS && !stateReceived; attempt++)
     {
@@ -503,88 +570,24 @@ WizBulbState getBulbState(IPAddress deviceIP)
         }
 
         // Send request to specific device with error checking
-        udp.beginPacket(deviceIP, WIZ_PORT);
-        udp.print(stateMessage);
-        bool sent = udp.endPacket();
+        size_t sentBytes = udp.writeTo((const uint8_t*)stateMessage.c_str(), stateMessage.length(), deviceIP, WIZ_PORT);
         
-        if (!sent) {
-            Serial.printf("  Warning: State request attempt %d failed (TX buffer full)\n", attempt);
+        if (sentBytes == 0) {
+            Serial.printf("  Warning: State request attempt %d failed (AsyncUDP send error)\n", attempt);
             continue; // Skip to next attempt
         }
 
         unsigned long startTime = millis();
+        responseReceived = false;
 
         // Wait for response
-        while (millis() - startTime < (RESPONSE_TIMEOUT / STATE_ATTEMPTS))
+        while (millis() - startTime < (RESPONSE_TIMEOUT / STATE_ATTEMPTS) && !responseReceived)
         {
-            int packetSize = udp.parsePacket();
-
-            if (packetSize)
-            {
-                const int MAX_RESPONSE_SIZE = 512;
-                char response[MAX_RESPONSE_SIZE];
-                int len = udp.read(response, sizeof(response) - 1);
-                if (len >= MAX_RESPONSE_SIZE - 1)
-                {
-                    Serial.println("  Warning: State response truncated");
-                }
-                response[len] = '\0';
-
-                JsonDocument doc;
-                DeserializationError error = deserializeJson(doc, response);
-
-                if (!error)
-                {
-                    if (doc["result"].is<JsonObject>())
-                    {
-                        JsonObject result = doc["result"];
-
-                        // Extract state information
-                        bulbState.state = result["state"] | false;
-                        bulbState.dimming = result["dimming"] | -1;
-                        
-                        // Color values
-                        bulbState.r = result["r"] | -1;
-                        bulbState.g = result["g"] | -1;
-                        bulbState.b = result["b"] | -1;
-                        bulbState.c = result["c"] | -1;
-                        bulbState.w = result["w"] | -1;
-                        
-                        // Color temperature
-                        bulbState.temp = result["temp"] | -1;
-                        
-                        // Scene and effects
-                        bulbState.sceneId = result["sceneId"] | -1;
-                        bulbState.speed = result["speed"] | -1;
-                        
-                        // Fan speed (if present)
-                        bulbState.fanspd = result["fanspd"] | -1;
-
-                        bulbState.isValid = true;
-                        bulbState.lastUpdated = millis();
-
-                        Serial.printf(" Bulb State raw response: %s\n", response);
-
-                        stateReceived = true;
-                    }
-                    else
-                    {
-                        Serial.println("  State response doesn't contain 'result' field");
-                        bulbState.errorMessage = "Invalid state response format";
-                        stateReceived = true;
-                    }
-                }
-                else
-                {
-                    Serial.printf("  Failed to parse state JSON: %s\n", error.c_str());
-                    bulbState.errorMessage = "JSON parse error: " + String(error.c_str());
-                    stateReceived = true;
-                }
-
-                break;
-            }
-
             delay(10);
+        }
+
+        if (stateReceived) {
+            break;
         }
     }
 
@@ -594,19 +597,13 @@ WizBulbState getBulbState(IPAddress deviceIP)
         bulbState.errorMessage = "Timeout - no state response";
     }
 
-    udp.stop();
+    udp.close();
     return bulbState;
 }
 
 bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const Features& features)
 {
-    WiFiUDP udp;
-
-    if (!udp.begin(0))
-    {
-        Serial.println("Failed to start UDP for bulb control");
-        return false;
-    }
+    AsyncUDP udp;
 
     // Build setPilot command JSON with capability checking
     JsonDocument doc;
@@ -669,20 +666,18 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
         // Enforce global rate limiting before sending
         enforceGlobalUdpDelay();
         
-        udp.beginPacket(deviceIP, WIZ_PORT);
-        udp.print(controlMessage);
-        packetSent = udp.endPacket();
+        // AsyncUDP sends packets asynchronously - returns size of sent packet or 0 if failed
+        size_t sentBytes = udp.writeTo((const uint8_t*)controlMessage.c_str(), controlMessage.length(), deviceIP, WIZ_PORT);
+        packetSent = (sentBytes > 0);
         
         if (!packetSent) {
-            Serial.printf("  UDP send failed (attempt %d/%d) - retrying...\n", 
+            Serial.printf("  AsyncUDP send failed (attempt %d/%d) - retrying...\n", 
                          attempt, MAX_UDP_RETRIES);
             if (attempt < MAX_UDP_RETRIES) {
                 delay(UDP_RETRY_DELAY);
             }
         }
     }
-    
-    udp.stop();
     
     if (packetSent) {
         //Serial.printf("  Control command sent to %s\n", deviceIP.toString().c_str());                        
