@@ -72,6 +72,10 @@ IPAddress wifi_connect(int pin_to_blink, int button)
   }
 
   Serial.printf("\nWiFi connected\nIP address: %s, Broadcast: %s\n", WiFi.localIP().toString().c_str(), broadcastIP().toString().c_str());
+  
+  // Configure WiFi power save for ESP32-C6 UDP reliability
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  
   digitalWrite(pin_to_blink, HIGH);
 
   return WiFi.localIP();
@@ -97,6 +101,8 @@ bool checkWiFiConnection() {
     
     if (WiFi.status() == WL_CONNECTED) {
       Serial.printf("\nWiFi reconnected - IP: %s\n", WiFi.localIP().toString().c_str());
+      // Re-disable power save after reconnection
+      esp_wifi_set_ps(WIFI_PS_NONE);
       return true;
     } else {
       Serial.println("\nWiFi reconnection failed - system restart required");

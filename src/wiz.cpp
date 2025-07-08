@@ -674,7 +674,7 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
         packetSent = udp.endPacket();
         
         if (!packetSent) {
-            Serial.printf("  UDP send failed (attempt %d/%d) - TX buffers full, retrying...\n", 
+            Serial.printf("  UDP send failed (attempt %d/%d) - retrying...\n", 
                          attempt, MAX_UDP_RETRIES);
             if (attempt < MAX_UDP_RETRIES) {
                 delay(UDP_RETRY_DELAY);
