@@ -11,6 +11,8 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Dynamic Zigbee Bridge**: Creates appropriate Zigbee device types based on WiZ bulb capabilities  
 - **Connection Monitoring**: Automatic monitoring and recovery from WiFi, Zigbee, or WiZ communication failures
 - **Persistent Storage**: Caches discovered lights for fast startup with intelligent IP address management
+- **Multi-threaded Architecture**: Individual FreeRTOS tasks for each light enable responsive, non-blocking communication
+- **Thread-Safe Operations**: Mutex protection prevents race conditions during state updates and filesystem operations
 - **Individual Rate Limiting**: Per-light command throttling to prevent overload
 - **Smart Color Handling**: Intelligent RGB vs temperature mode detection and switching
 

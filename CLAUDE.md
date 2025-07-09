@@ -21,6 +21,8 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Zigbee Bridge (`src/lights.cpp`)**
 - **Dynamic Light Creation**: Creates Zigbee lights dynamically based on discovered WiZ bulbs
 - **ZigbeeWizLight Class**: Encapsulates each Zigbee-WiZ light pair with individual state management
+- **Multi-threaded Architecture**: Uses FreeRTOS tasks for asynchronous communication with individual WiZ bulbs
+- **Thread-Safe State Management**: FreeRTOS mutexes protect shared state and filesystem operations
 - **Rate Limiting**: Individual 100ms rate limiting per light to prevent WiZ bulb overload
 - **State Synchronization**: Reads actual WiZ bulb state on startup for accurate initial state
 - **Zigbee Protocol**: ESP32-C6 Zigbee stack integration for network communication
@@ -32,6 +34,7 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Reset System**: Unified reset with visual feedback and reliable filesystem clearing
 - **Button Handling**: Reset available during all connection phases (WiFi, Zigbee, setup, main loop)
 - **Connection Monitoring**: Automatic monitoring and restart on WiFi, Zigbee, or WiZ failures
+- **FreeRTOS Integration**: Uses FreeRTOS delay functions for proper task scheduling
 
 **Network Layer (`src/wifi.cpp`)**
 - **WiFi Management**: Connects to local network for WiZ discovery
@@ -49,7 +52,7 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **`WizBulbState`**: Current device state with -1 indicating "unknown" values
 **`Features`**: Capability flags (brightness, color, color_tmp, effect, fan) with Kelvin ranges
 **`BulbClass`**: Enum categorizing bulb types for appropriate command filtering
-**`ZigbeeWizLight`**: Class managing individual Zigbee-WiZ light pairs with state and rate limiting
+**`ZigbeeWizLight`**: Class managing individual Zigbee-WiZ light pairs with state and rate limiting, includes FreeRTOS communication task
 
 ### State Management Pattern
 
@@ -61,9 +64,11 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 6. **Initial State Sync**: Each ZigbeeWizLight reads actual WiZ bulb state on startup
 7. **State Reading**: `getBulbState()` queries current device state via AsyncUDP "getPilot" with callback-based response handling
 8. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters via AsyncUDP
-9. **Rate Limited Updates**: Individual 100ms rate limiting per light with 10-second periodic refresh  
-10. **Smart Color Handling**: Detects RGB vs temperature parameter changes and sends only relevant commands
-11. **JSON Debug**: All operations output structured JSON for debugging
+9. **Multi-threaded Communication**: Each bulb has a dedicated FreeRTOS task for asynchronous communication
+10. **Thread-Safe Operations**: State updates and filesystem operations protected by FreeRTOS mutexes
+11. **Rate Limited Updates**: Individual 100ms rate limiting per light with 10-second periodic refresh  
+12. **Smart Color Handling**: Detects RGB vs temperature parameter changes and sends only relevant commands
+13. **JSON Debug**: All operations output structured JSON for debugging
 
 ### File System Operations
 
@@ -72,6 +77,7 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Unified Reset**: `resetSystem()` clears both LittleFS cache and Zigbee network
 - **Reliable Persistence**: `LittleFS.end()` forces write buffer flush before system reset
 - **Filesystem Sync**: Explicit unmount/remount cycle ensures data integrity during resets
+- **Thread-Safe Filesystem**: Global filesystem mutex prevents concurrent access during settings saves
 
 ## Hardware Configuration
 
@@ -110,6 +116,9 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Error Handling**: Comprehensive error messages with retry logic for network operations (20 attempts for system config)
 **Reset System**: Visual feedback with fast LED blinking (100ms intervals) during button hold
 **Filesystem Sync**: Explicit LittleFS flush operations prevent data loss during resets
+**Multi-threading**: FreeRTOS tasks handle individual bulb communication asynchronously
+**Thread Safety**: Mutexes protect shared state and filesystem operations from race conditions
+**Task Management**: Communication tasks created per bulb with proper cleanup in destructors
 
 ### Zigbee Light Management
 
@@ -117,6 +126,8 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Endpoint Mapping**: Endpoints start from 10 and increment sequentially for each bulb (sorted by MAC)
 **Individual Rate Limiting**: Each ZigbeeWizLight has independent 100ms rate limiting to prevent WiZ overload
 **State Synchronization**: On startup, each light reads the actual WiZ bulb state for accurate initial values
+**Asynchronous Communication**: Each bulb has a dedicated FreeRTOS task for non-blocking communication
+**Thread-Safe State Updates**: State changes protected by mutexes to prevent race conditions
 **Capability Mapping**: WiZ bulb types automatically map to appropriate Zigbee light types:
 - RGB → ESP_ZB_HUE_LIGHT_TYPE_EXTENDED_COLOR (supports full color + tunable white)
 - TW → ESP_ZB_HUE_LIGHT_TYPE_TEMPERATURE
@@ -134,6 +145,8 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Optimized Callbacks**: Minimal Serial output in callbacks to reduce processing lag (optional debug mode available)
 **Color Temperature**: Proper mireds/Kelvin conversions with validation and range clamping to prevent invalid values
 **Test Mode Enhancement**: During Zigbee connection, cycles through random colors and temperatures for visual feedback
+**Task-based Communication**: FreeRTOS tasks handle periodic updates and state changes asynchronously
+**Filesystem Coordination**: Global mutex ensures thread-safe settings saves across all bulb tasks
 
 ### IP Address Management
 
@@ -184,4 +197,4 @@ Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 3. **WiZ Communication Issues**: Tracks consecutive failures, restarts after threshold exceeded
 4. **Manual Reset**: 3+ second button hold for immediate factory reset and restart
 
-The system performs automatic WiZ discovery with intelligent caching - uses stored lights for fast startup, network discovery as fallback, creates dynamic Zigbee lights with individual rate limiting and state management, comprehensive connection monitoring with automatic recovery, and outputs structured JSON logs for monitoring and debugging.
+The system performs automatic WiZ discovery with intelligent caching - uses stored lights for fast startup, network discovery as fallback, creates dynamic Zigbee lights with individual FreeRTOS communication tasks, thread-safe state management with mutex protection, comprehensive connection monitoring with automatic recovery, and outputs structured JSON logs for monitoring and debugging.
