@@ -3,6 +3,8 @@
 #include <AsyncUDP.h>
 #include <ArduinoJson.h>
 #include <vector>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 const int WIZ_PORT = 38899;
 const int DISCOVERY_TIMEOUT = 10000;       // 10 seconds total discovery time
@@ -14,13 +16,13 @@ const int RETRY_BROADCAST_INTERVAL = 3000; // Retry broadcast every 3 seconds
 
 // Global UDP transmission rate limiting to prevent buffer overflow
 static unsigned long lastGlobalUdpSend = 0;
-const int GLOBAL_UDP_DELAY = 20;           // 20ms minimum between any UDP sends
+const int GLOBAL_UDP_DELAY = 5;
 
 // Helper function to enforce global UDP rate limiting
 static void enforceGlobalUdpDelay() {
     unsigned long timeSinceLastSend = millis() - lastGlobalUdpSend;
     if (timeSinceLastSend < GLOBAL_UDP_DELAY) {
-        delay(GLOBAL_UDP_DELAY - timeSinceLastSend);
+        vTaskDelay(pdMS_TO_TICKS(GLOBAL_UDP_DELAY - timeSinceLastSend));
     }
     lastGlobalUdpSend = millis();
 }
@@ -175,7 +177,7 @@ std::vector<WizBulbInfo> scanForWiz(IPAddress broadcastIP)
                     bool sent = udp.endPacket();
                     
                     if (!sent) {
-                        Serial.println("  Warning: Retry broadcast failed (TX buffer full)");
+                        Serial.println("  Warning: Retry broadcast failed");
                     }
 
                     lastRetryBroadcast = millis();
@@ -654,7 +656,7 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
     serializeJson(doc, controlMessage);
 
     // Serial.printf("Setting bulb state for %s\n", deviceIP.toString().c_str());
-    // Serial.printf("  Requested state: %s\n", wizBulbStateToJson(state).c_str());
+    Serial.printf("%s\n", controlMessage.c_str());
     // Serial.printf("  Control message: %s\n", controlMessage.c_str());
 
     // Send control command with retry mechanism for buffer overflow protection
@@ -662,6 +664,9 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
     const int UDP_RETRY_DELAY = 50; // 50ms delay between retries
     bool packetSent = false;
     
+    if (!udp.connect(deviceIP, WIZ_PORT)) {
+        Serial.printf("Failed to UDP connect");
+    }
     for (int attempt = 1; attempt <= MAX_UDP_RETRIES && !packetSent; attempt++) {
         // Enforce global rate limiting before sending
         enforceGlobalUdpDelay();
@@ -674,10 +679,11 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
             Serial.printf("  AsyncUDP send failed (attempt %d/%d) - retrying...\n", 
                          attempt, MAX_UDP_RETRIES);
             if (attempt < MAX_UDP_RETRIES) {
-                delay(UDP_RETRY_DELAY);
+                vTaskDelay(pdMS_TO_TICKS(UDP_RETRY_DELAY));
             }
         }
     }
+    udp.close();
     
     if (packetSent) {
         //Serial.printf("  Control command sent to %s\n", deviceIP.toString().c_str());                        

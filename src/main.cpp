@@ -103,7 +103,7 @@ void checkForReset(int button)
   if (digitalRead(button) == LOW)
   { // Push button pressed
     // Key debounce handling
-    delay(100);
+    vTaskDelay(pdMS_TO_TICKS(100));
     int startTime = millis();
     bool ledState = false;
     unsigned long lastBlink = millis();
@@ -118,7 +118,7 @@ void checkForReset(int button)
         lastBlink = millis();
       }
       
-      delay(10); // Short delay to prevent excessive CPU usage
+      vTaskDelay(pdMS_TO_TICKS(10));; // Short delay to prevent excessive CPU usage
       
       if ((millis() - startTime) > 3000)
       {
@@ -157,7 +157,7 @@ void checkConnections() {
   if (currentTime - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
     if (!checkWiFiConnection()) {
       Serial.println("WiFi monitoring detected connection loss - restarting system");
-      delay(1000);
+      vTaskDelay(pdMS_TO_TICKS(1000));
       ESP.restart();
     }
     lastWiFiCheck = currentTime;
@@ -167,7 +167,7 @@ void checkConnections() {
   if (currentTime - lastZigbeeCheck >= ZIGBEE_CHECK_INTERVAL) {
     if (!checkZigbeeConnection()) {
       Serial.println("Zigbee monitoring detected connection loss - restarting system");
-      delay(1000);
+      vTaskDelay(pdMS_TO_TICKS(1000));
       ESP.restart();
     }
     lastZigbeeCheck = currentTime;
@@ -177,7 +177,7 @@ void checkConnections() {
   if (currentTime - lastConnectionCheck >= CONNECTION_CHECK_INTERVAL) {
     if (!checkWizBulbHealth()) {
       Serial.println("WiZ bulb health critical - restarting system");
-      delay(1000);
+      vTaskDelay(pdMS_TO_TICKS(1000));
       ESP.restart();
     }
     lastConnectionCheck = currentTime;
@@ -187,10 +187,7 @@ void checkConnections() {
 void loop()
 {
   ledDigital(&ledBuiltinLeft, LED_BUILTIN_PERIOD, LED_BUILTIN, SLEEP);
-  delay(SLEEP);
-
-  // Process queued light commands with rate limiting
-  processLightCommands();
+  vTaskDelay(pdMS_TO_TICKS(SLEEP));
 
   // Monitor connections and restart if needed
   checkConnections();

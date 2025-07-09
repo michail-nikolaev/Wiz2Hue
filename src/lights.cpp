@@ -9,6 +9,9 @@
 #include <ArduinoJson.h>
 #include <vector>
 #include <map>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
 
 // Forward declarations
 class ZigbeeWizLight;
@@ -17,6 +20,9 @@ static void staticIdentifyCallback(uint16_t time);
 
 // Global mapping
 static std::map<uint8_t, ZigbeeWizLight*> endpointToLight;
+
+// Global filesystem mutex for settings saving
+static SemaphoreHandle_t filesystemMutex = nullptr;
 
 // WiZ bulb health monitoring
 int wizBulbFailureCount = 0;
@@ -52,6 +58,12 @@ private:
   // Settings save rate limiting
   unsigned long lastSettingsSave;
   bool hasPendingSettingsSave;
+  
+  // FreeRTOS synchronization
+  SemaphoreHandle_t stateMutex;
+  volatile bool pendingStateUpdate;
+  volatile bool pendingSettingsSave;
+  TaskHandle_t communicationTask;
   
   static const unsigned long COMMAND_INTERVAL = 100;   // 100ms between commands
   static const unsigned long PERIODIC_INTERVAL = 10000; // 10 seconds periodic update
@@ -161,12 +173,140 @@ private:
     setBulbState(wizBulb, wizState);
   }
   
+  // Static function for FreeRTOS communication task
+  static void communicationTaskFunction(void* parameter) {
+    ZigbeeWizLight* light = static_cast<ZigbeeWizLight*>(parameter);
+    light->communicationTaskLoop();
+  }
+  
+  // Communication task loop
+  void communicationTaskLoop() {
+    const TickType_t xDelay = pdMS_TO_TICKS(100); // 100ms delay
+    const TickType_t periodicDelay = pdMS_TO_TICKS(10000); // 10 second periodic update
+    const TickType_t settingsSaveDelay = pdMS_TO_TICKS(10000); // 10 second settings save interval
+    TickType_t lastPeriodicUpdate = xTaskGetTickCount();
+    TickType_t lastSettingsSave = xTaskGetTickCount();
+    
+    while (true) {
+      TickType_t currentTime = xTaskGetTickCount();
+      bool shouldSend = false;
+      
+      // Check for pending state update
+      if (pendingStateUpdate) {
+        shouldSend = true;
+        pendingStateUpdate = false;
+      }
+      
+      // Check for periodic update
+      if ((currentTime - lastPeriodicUpdate) >= periodicDelay) {
+        shouldSend = true;
+        lastPeriodicUpdate = currentTime;
+      }
+      
+      if (shouldSend) {
+        // Take mutex to read current state
+        if (xSemaphoreTake(stateMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+          // Copy current state under mutex protection
+          WizBulbState stateToSend;
+          stateToSend.state = currentState;
+          
+          if (currentState && wizBulb.features.brightness) {
+            stateToSend.dimming = map(currentLevel, 0, 255, 0, 100);
+          }
+          
+          // Smart parameter sending based on current mode
+          if (currentState && wizBulb.features.color && 
+              currentRed >= 0 && currentGreen >= 0 && currentBlue >= 0) {
+            // RGB mode - send RGB values, exclude temperature
+            stateToSend.r = currentRed;
+            stateToSend.g = currentGreen;
+            stateToSend.b = currentBlue;
+          } else if (currentState && wizBulb.features.color_tmp && currentTemperature > 0) {
+            // Temperature mode - send temperature, exclude RGB
+            int kelvin = 1000000 / currentTemperature;
+            // Clamp to bulb's supported range
+            if (kelvin < wizBulb.features.kelvin_range.min) {
+              kelvin = wizBulb.features.kelvin_range.min;
+            } else if (kelvin > wizBulb.features.kelvin_range.max) {
+              kelvin = wizBulb.features.kelvin_range.max;
+            }
+            stateToSend.temp = kelvin;
+          }
+          
+          xSemaphoreGive(stateMutex);
+
+          // Send to WiZ bulb (outside mutex to avoid blocking)
+          bool success = setBulbState(wizBulb, stateToSend);
+          if (!success) {
+            Serial.printf("Failed to send state to bulb %s\n", wizBulb.ip.c_str());
+          }
+        } else {
+          Serial.printf("Failed to acquire mutex for bulb %s\n", wizBulb.ip.c_str());
+        }
+      }
+      
+      // Handle settings saving with global filesystem lock
+      if (pendingSettingsSave && (currentTime - lastSettingsSave) >= settingsSaveDelay) {
+        // Try to acquire filesystem mutex with timeout (non-blocking)
+        if (xSemaphoreTake(filesystemMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+          // Take state mutex to read current settings
+          if (xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            // Save settings to filesystem
+            JsonDocument doc;
+            doc["mac"] = wizBulb.mac;
+            doc["endpoint"] = endpoint;
+            doc["state"] = currentState;
+            doc["red"] = currentRed;
+            doc["green"] = currentGreen;
+            doc["blue"] = currentBlue;
+            doc["level"] = currentLevel;
+            doc["temperature"] = currentTemperature;\
+            xSemaphoreGive(stateMutex);
+            
+            String jsonContent;
+            serializeJson(doc, jsonContent);
+            
+            String macForFilename = wizBulb.mac;
+            macForFilename.replace(":", "");
+            String filepath = "/light_" + macForFilename + ".json";
+            
+            File file = LittleFS.open(filepath, "w");
+            if (file) {
+              file.print(jsonContent);
+              file.close();
+              Serial.printf("Saved settings for light %s: %s\n", wizBulb.mac.c_str(), jsonContent.c_str());
+              pendingSettingsSave = false;
+              lastSettingsSave = currentTime;
+            } else {
+              Serial.printf("Failed to save settings for light %s\n", wizBulb.mac.c_str());
+            }
+          }
+          xSemaphoreGive(filesystemMutex);
+        } else {
+          // Filesystem is busy, try again later
+          Serial.printf("Filesystem busy, delaying settings save for bulb %s\n", wizBulb.mac.c_str());
+        }
+      }
+      
+      // Use FreeRTOS delay
+      vTaskDelay(xDelay);
+    }
+  }
+  
 public:
   ZigbeeWizLight(uint8_t ep, const WizBulbInfo& bulb, es_zb_hue_light_type_t zigbeeType) 
     : wizBulb(bulb), endpoint(ep), currentState(false), currentRed(-1), currentGreen(-1), 
       currentBlue(-1), currentLevel(0), currentTemperature(-1), prevRed(0), prevGreen(0),
       prevBlue(0), prevTemperature(0), lastCommandTime(0), lastPeriodicUpdate(0), 
-      hasPendingUpdate(false), lastSettingsSave(0), hasPendingSettingsSave(false) {
+      hasPendingUpdate(false), lastSettingsSave(0), hasPendingSettingsSave(false),
+      pendingStateUpdate(false), pendingSettingsSave(false), communicationTask(nullptr) {
+    
+    // Create mutex for state synchronization
+    stateMutex = xSemaphoreCreateMutex();
+    if (stateMutex == nullptr) {
+      Serial.printf("Failed to create mutex for bulb %s\n", bulb.mac.c_str());
+      return;
+    }
     
     // Try to load settings from JSON file first
     bool settingsLoaded = loadSettings();
@@ -226,9 +366,38 @@ public:
     zigbeeLight->setSwBuild("0.0.1");
     zigbeeLight->setOnOffOnTime(0);
     zigbeeLight->setOnOffGlobalSceneControl(false);
+    
+    // Create communication task for this bulb
+    String taskName = "WizComm_" + String(endpoint);
+    BaseType_t taskResult = xTaskCreate(
+      communicationTaskFunction,
+      taskName.c_str(),
+      4096,  // Stack size
+      this,  // Parameter (this instance)
+      1,     // Priority
+      &communicationTask
+    );
+    
+    if (taskResult != pdPASS) {
+      Serial.printf("Failed to create communication task for bulb %s\n", bulb.mac.c_str());
+    } else {
+      Serial.printf("Created communication task for bulb %s (endpoint %d)\n", bulb.mac.c_str(), endpoint);
+    }
   }
   
   ~ZigbeeWizLight() {
+    // Stop the communication task
+    if (communicationTask != nullptr) {
+      vTaskDelete(communicationTask);
+      communicationTask = nullptr;
+    }
+    
+    // Delete the mutex
+    if (stateMutex != nullptr) {
+      vSemaphoreDelete(stateMutex);
+      stateMutex = nullptr;
+    }
+    
     delete zigbeeLight;
   }
   
@@ -248,119 +417,69 @@ public:
       Serial.printf("WARNING: Received command for EP:%d but this is EP:%d\n", ep, endpoint);
       return; // Ignore commands for wrong endpoint
     }
-    // Optional debug output - uncomment to enable detailed logging
-    Serial.printf("onLightChange EP:%d State:%s RGB:(%d,%d,%d) Level:%d Temp:%d mireds Mode:%d\n", 
-                  ep, state ? "ON" : "OFF", red, green, blue, level, temperature, color_mode);
     
-    // Detect what changed to send only relevant parameters
-    bool rgbChanged = (red != prevRed || green != prevGreen || blue != prevBlue);
-    bool tempChanged = (temperature != prevTemperature);
-    if (color_mode == ESP_ZB_ZCL_COLOR_CONTROL_COLOR_MODE_HUE_SATURATION || color_mode == ESP_ZB_ZCL_COLOR_CONTROL_COLOR_MODE_CURRENT_X_Y) {
-      rgbChanged = true;
-      tempChanged = false;
-    } else if (color_mode == ESP_ZB_ZCL_COLOR_CONTROL_COLOR_MODE_TEMPERATURE) {
-      rgbChanged = false;
-      tempChanged = true;
-    }
+    // Take mutex to update state safely
+    if (xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+      // Optional debug output - uncomment to enable detailed logging
+      Serial.printf("onLightChange EP:%d State:%s RGB:(%d,%d,%d) Level:%d Temp:%d mireds Mode:%d\n", 
+                    ep, state ? "ON" : "OFF", red, green, blue, level, temperature, color_mode);
+      
+      // Detect what changed to send only relevant parameters
+      bool rgbChanged = (red != prevRed || green != prevGreen || blue != prevBlue);
+      bool tempChanged = (temperature != prevTemperature);
+      if (color_mode == ESP_ZB_ZCL_COLOR_CONTROL_COLOR_MODE_HUE_SATURATION || color_mode == ESP_ZB_ZCL_COLOR_CONTROL_COLOR_MODE_CURRENT_X_Y) {
+        rgbChanged = true;
+        tempChanged = false;
+      } else if (color_mode == ESP_ZB_ZCL_COLOR_CONTROL_COLOR_MODE_TEMPERATURE) {
+        rgbChanged = false;
+        tempChanged = true;
+      }
 
-    
-    // Update previous state for next comparison
-    prevRed = red;
-    prevGreen = green;
-    prevBlue = blue;
-    prevTemperature = temperature;
-    
-    // Update current state
-    currentState = state;
-    currentLevel = level;
-    
-    // Smart parameter selection: prioritize the parameter group that changed
-    if (rgbChanged && wizBulb.features.color) {
-      // RGB changed - use RGB mode, reset temperature
-      currentRed = red;
-      currentGreen = green;
-      currentBlue = blue;
-      currentTemperature = -1; // Reset temperature to avoid conflicts
-      Serial.printf("  → RGB mode: RGB(%d,%d,%d), temp set to -1\n", red, green, blue);
-    } else if (tempChanged && wizBulb.features.color_tmp) {
-      // Temperature changed - use temperature mode, reset RGB
-      currentTemperature = temperature;
-      currentRed = -1;   // Reset RGB to avoid conflicts
-      currentGreen = -1;
-      currentBlue = -1;
-      Serial.printf("  → Temperature mode: %d mireds, RGB set to -1\n", temperature);
+      
+      // Update previous state for next comparison
+      prevRed = red;
+      prevGreen = green;
+      prevBlue = blue;
+      prevTemperature = temperature;
+      
+      // Update current state
+      currentState = state;
+      currentLevel = level;
+      
+      // Smart parameter selection: prioritize the parameter group that changed
+      if (rgbChanged && wizBulb.features.color) {
+        // RGB changed - use RGB mode, reset temperature
+        currentRed = red;
+        currentGreen = green;
+        currentBlue = blue;
+        currentTemperature = -1; // Reset temperature to avoid conflicts
+        //Serial.printf("  → RGB mode: RGB(%d,%d,%d), temp set to -1\n", red, green, blue);
+      } else if (tempChanged && wizBulb.features.color_tmp) {
+        // Temperature changed - use temperature mode, reset RGB
+        currentTemperature = temperature;
+        currentRed = -1;   // Reset RGB to avoid conflicts
+        currentGreen = -1;
+        currentBlue = -1;
+        //Serial.printf("  → Temperature mode: %d mireds, RGB set to -1\n", temperature);
+      }
+      
+      // Mark settings as needing to be saved (handled by communication task)
+      pendingSettingsSave = true;
+      
+      // Set flag to notify communication task instead of direct sending
+      pendingStateUpdate = true;
+      
+      xSemaphoreGive(stateMutex);
+    } else {
+      Serial.printf("Failed to acquire mutex in onLightChangeCallback for bulb %s\n", wizBulb.ip.c_str());
     }
-    
-    // Mark settings as needing to be saved (rate limited)
-    hasPendingSettingsSave = true;
-    
-    hasPendingUpdate = true;
   }
   
   void onIdentifyCallback(uint16_t time) {
     // Identify callback - could implement LED blinking here if needed
   }
   
-  void processCommands() {
-    unsigned long currentTime = millis();
-    
-    // Check for periodic update
-    if (currentTime - lastPeriodicUpdate >= PERIODIC_INTERVAL) {
-      hasPendingUpdate = true;
-      lastPeriodicUpdate = currentTime;
-    }
-    
-    // Send command if pending and rate limit allows
-    if (hasPendingUpdate && (currentTime - lastCommandTime >= COMMAND_INTERVAL)) {
-      sendToWizBulb();
-      hasPendingUpdate = false;
-      lastCommandTime = currentTime;
-    }
-    
-    // Save settings if pending and rate limit allows
-    if (hasPendingSettingsSave && (currentTime - lastSettingsSave >= SETTINGS_SAVE_INTERVAL)) {
-      saveSettings();
-      hasPendingSettingsSave = false;
-      lastSettingsSave = currentTime;
-    }
-  }
-  
 private:
-  void sendToWizBulb() {
-    // Convert current Hue state to WiZ state
-    WizBulbState wizState;
-    wizState.state = currentState;
-    
-    Serial.printf("  sendToWizBulb (%s): current RGB(%d,%d,%d), temp %d\n", 
-                  wizBulb.ip.c_str(), currentRed, currentGreen, currentBlue, currentTemperature);
-    
-    if (currentState && wizBulb.features.brightness) {
-      wizState.dimming = map(currentLevel, 0, 255, 0, 100);
-    }
-    
-    // Smart parameter sending: check what mode we're in based on values
-    if (currentState && wizBulb.features.color && 
-        currentRed >= 0 && currentGreen >= 0 && currentBlue >= 0) {
-      // RGB mode - send RGB values, exclude temperature
-      wizState.r = currentRed;
-      wizState.g = currentGreen;
-      wizState.b = currentBlue;      
-      //Serial.printf("  → Sending RGB mode: RGB(%d,%d,%d), temp excluded\n", (int)currentRed, (int)currentGreen, (int)currentBlue);
-    } else if (currentState && wizBulb.features.color_tmp && currentTemperature > 0) {
-      // Temperature mode - send temperature, exclude RGB
-      int kelvin = 1000000 / currentTemperature;
-      // Clamp to bulb's supported range
-      if (kelvin < wizBulb.features.kelvin_range.min) {
-        kelvin = wizBulb.features.kelvin_range.min;
-      } else if (kelvin > wizBulb.features.kelvin_range.max) {
-        kelvin = wizBulb.features.kelvin_range.max;
-      }
-      wizState.temp = kelvin;      
-      Serial.printf("  → Sending temp mode: %dK, RGB excluded\n", kelvin);
-    }
-    
-    setBulbState(wizBulb, wizState);
-  }
   
   String getHueModelName(const WizBulbInfo& bulb) {
     switch (bulb.bulbClass) {
@@ -501,15 +620,6 @@ static void staticIdentifyCallback(uint16_t time) {
   // Static identify callback - implementation could be added if needed
 }
 
-// Process all light commands
-void processLightCommands()
-{
-  for (auto* light : zigbeeWizLights) {
-    light->processCommands();
-  }
-}
-
-
 void hue_reset()
 {
   Zigbee.factoryReset();
@@ -534,6 +644,16 @@ bool checkWizBulbHealth() {
 void setup_lights(const std::vector<WizBulbInfo>& bulbs)
 {
   Serial.printf("\n=== Setting up Zigbee lights for %d WiZ bulbs ===\n", bulbs.size());
+  
+  // Initialize global filesystem mutex if not already created
+  if (filesystemMutex == nullptr) {
+    filesystemMutex = xSemaphoreCreateMutex();
+    if (filesystemMutex == nullptr) {
+      Serial.println("Failed to create filesystem mutex");
+      return;
+    }
+    Serial.println("Created global filesystem mutex");
+  }
   
   // Clear existing lights
   for (auto* light : zigbeeWizLights) {
