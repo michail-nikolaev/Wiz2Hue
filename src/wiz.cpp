@@ -16,7 +16,7 @@ const int RETRY_BROADCAST_INTERVAL = 3000; // Retry broadcast every 3 seconds
 
 // Global UDP transmission rate limiting to prevent buffer overflow
 static unsigned long lastGlobalUdpSend = 0;
-const int GLOBAL_UDP_DELAY = 5;
+const int GLOBAL_UDP_DELAY = 0;
 
 // Helper function to enforce global UDP rate limiting
 static void enforceGlobalUdpDelay() {
@@ -655,9 +655,7 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
     String controlMessage;
     serializeJson(doc, controlMessage);
 
-    // Serial.printf("Setting bulb state for %s\n", deviceIP.toString().c_str());
-    Serial.printf("%s\n", controlMessage.c_str());
-    // Serial.printf("  Control message: %s\n", controlMessage.c_str());
+    Serial.printf("%s : %s\n", deviceIP.toString().c_str(), controlMessage.c_str());
 
     // Send control command with retry mechanism for buffer overflow protection
     const int MAX_UDP_RETRIES = 5;
@@ -676,8 +674,7 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
         packetSent = (sentBytes > 0);
         
         if (!packetSent) {
-            Serial.printf("  AsyncUDP send failed (attempt %d/%d) - retrying...\n", 
-                         attempt, MAX_UDP_RETRIES);
+            Serial.printf("  AsyncUDP send failed %s (attempt %d/%d) - retrying...\n", esp_err_to_name(udp.lastErr()), attempt, MAX_UDP_RETRIES);
             if (attempt < MAX_UDP_RETRIES) {
                 vTaskDelay(pdMS_TO_TICKS(UDP_RETRY_DELAY));
             }
