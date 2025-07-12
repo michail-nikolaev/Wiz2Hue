@@ -16,7 +16,7 @@ const int RETRY_BROADCAST_INTERVAL = 3000; // Retry broadcast every 3 seconds
 
 // Global UDP transmission rate limiting to prevent buffer overflow
 static unsigned long lastGlobalUdpSend = 0;
-const int GLOBAL_UDP_DELAY = 0;
+const int GLOBAL_UDP_DELAY = 10;
 
 // Helper function to enforce global UDP rate limiting
 static void enforceGlobalUdpDelay() {
@@ -605,7 +605,13 @@ WizBulbState getBulbState(IPAddress deviceIP)
 
 bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const Features& features)
 {
-    AsyncUDP udp;
+    WiFiUDP udp;
+
+    // Start UDP on a random port for listening to response
+    if (!udp.begin(0)) {
+        Serial.printf("Failed to start UDP for setPilot to %s\n", deviceIP.toString().c_str());
+        return false;
+    }
 
     // Build setPilot command JSON with capability checking
     JsonDocument doc;
@@ -657,36 +663,83 @@ bool setBulbStateInternal(IPAddress deviceIP, const WizBulbState& state, const F
 
     Serial.printf("%s : %s\n", deviceIP.toString().c_str(), controlMessage.c_str());
 
-    // Send control command with retry mechanism for buffer overflow protection
+    // Send control command with retry mechanism and wait for response
     const int MAX_UDP_RETRIES = 5;
     const int UDP_RETRY_DELAY = 50; // 50ms delay between retries
-    bool packetSent = false;
+    const int RESPONSE_TIMEOUT = 1000; // 1 second timeout for response
+    bool success = false;
     
-    if (!udp.connect(deviceIP, WIZ_PORT)) {
-        Serial.printf("Failed to UDP connect");
-    }
-    for (int attempt = 1; attempt <= MAX_UDP_RETRIES && !packetSent; attempt++) {
+    for (int attempt = 1; attempt <= MAX_UDP_RETRIES && !success; attempt++) {
+        
+        // Send setPilot command
+        udp.beginPacket(deviceIP, WIZ_PORT);
+        udp.print(controlMessage);
+        bool packetSent = udp.endPacket();
         // Enforce global rate limiting before sending
         enforceGlobalUdpDelay();
         
-        // AsyncUDP sends packets asynchronously - returns size of sent packet or 0 if failed
-        size_t sentBytes = udp.writeTo((const uint8_t*)controlMessage.c_str(), controlMessage.length(), deviceIP, WIZ_PORT);
-        packetSent = (sentBytes > 0);
-        
         if (!packetSent) {
-            Serial.printf("  AsyncUDP send failed %s (attempt %d/%d) - retrying...\n", esp_err_to_name(udp.lastErr()), attempt, MAX_UDP_RETRIES);
+            Serial.printf("  UDP send failed (attempt %d/%d) - retrying...\n", attempt, MAX_UDP_RETRIES);
             if (attempt < MAX_UDP_RETRIES) {
                 vTaskDelay(pdMS_TO_TICKS(UDP_RETRY_DELAY));
             }
+            continue;
+        }
+        
+        // Wait for response
+        unsigned long startTime = millis();
+        while (millis() - startTime < RESPONSE_TIMEOUT) {
+            int packetSize = udp.parsePacket();
+            if (packetSize > 0) {
+                IPAddress responseIP = udp.remoteIP();
+                
+                // Verify response is from the target device
+                if (responseIP == deviceIP) {
+                    char responseBuffer[512];
+                    int bytesRead = udp.read(responseBuffer, sizeof(responseBuffer) - 1);
+                    responseBuffer[bytesRead] = '\0';
+                    
+                    // Parse JSON response
+                    JsonDocument responseDoc;
+                    DeserializationError error = deserializeJson(responseDoc, responseBuffer);
+                    
+                    if (!error) {
+                        // Check if response indicates success
+                        if (responseDoc["result"].is<JsonObject>() && responseDoc["result"]["success"].as<bool>()) {
+                            Serial.printf("  setPilot success confirmed from %s\n", deviceIP.toString().c_str());
+                            success = true;
+                            break;
+                        } else if (responseDoc["error"].is<JsonObject>()) {
+                            Serial.printf("  setPilot error from %s: %s\n", 
+                                        deviceIP.toString().c_str(), 
+                                        responseDoc["error"]["message"].as<String>().c_str());
+                            break; // Don't retry on explicit error
+                        }
+                    } else {
+                        Serial.printf("  Invalid JSON response from %s: %s\n", 
+                                    deviceIP.toString().c_str(), responseBuffer);
+                    }
+                } else {
+                    // Response from different device, keep waiting
+                    continue;
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(10)); // Small delay to avoid busy waiting
+        }
+        
+        if (!success && attempt < MAX_UDP_RETRIES) {
+            Serial.printf("  No response from %s (attempt %d/%d) - retrying...\n", 
+                         deviceIP.toString().c_str(), attempt, MAX_UDP_RETRIES);
+            vTaskDelay(pdMS_TO_TICKS(UDP_RETRY_DELAY));
         }
     }
-    udp.close();
     
-    if (packetSent) {
-        //Serial.printf("  Control command sent to %s\n", deviceIP.toString().c_str());                        
+    udp.stop();
+    
+    if (success) {
         return true;
     } else {
-        Serial.printf("  Failed to send control command to %s after %d attempts\n", 
+        Serial.printf("  Failed to set bulb state on %s after %d attempts\n", 
                      deviceIP.toString().c_str(), MAX_UDP_RETRIES);
         return false;
     }

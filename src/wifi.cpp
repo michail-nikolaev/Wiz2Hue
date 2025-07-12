@@ -5,6 +5,7 @@
 
 const char *ssid = SSID;
 const char *password = PASSWORD;
+const int CHANNEL = 11; // TODO
 
 IPAddress broadcastIP()
 {
@@ -36,7 +37,7 @@ IPAddress wifi_connect(int pin_to_blink, int button)
   Serial.printf("\n******************************************************Connecting to %s\n", ssid);
 
   // Try connection with explicit parameters
-  WiFi.begin(ssid, password);
+  WiFi.begin(ssid, password, CHANNEL);
   Serial.printf("WiFi.begin() called, status: %d\n", WiFi.status());
 
   // Add timeout to prevent infinite loop
@@ -88,7 +89,7 @@ bool checkWiFiConnection() {
     // Try quick reconnection first
     WiFi.disconnect(true);
     delay(1000);
-    WiFi.begin(ssid, password);
+    WiFi.begin(ssid, password, CHANNEL);
     
     // Wait up to 10 seconds for reconnection
     unsigned long startTime = millis();
