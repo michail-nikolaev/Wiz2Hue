@@ -1,4 +1,4 @@
-# Wiz2Hue - WiZ to Zigbee Bridge
+# Wiz2Hue - WiZ to Zigbee (Hue-compatible) Bridge
 
 > **Note**: This project was developed with assistance from AI (Claude Code)
 
