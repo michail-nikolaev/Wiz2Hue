@@ -46,7 +46,7 @@ private:
   uint16_t prevTemperature;
 
   // Leader mode state management
-  volatile LeaderMode currentLeaderMode;
+  LeaderMode currentLeaderMode;
   unsigned long hueLeaderModeStart;
   unsigned long lastWizBroadcastReceived;
   unsigned long lastPeriodicReadRequest;
@@ -197,11 +197,16 @@ private:
         WizBulbState wizState = getBulbState(wizBulb);
         if (wizState.isValid)
         {
-          currentLeaderMode = LeaderMode::IN_SYNC;
-          // Update from read state
-          lastWizBroadcastReceived = millis(); // Reset timeout
-          processWizStateUpdate(wizState);
-          currentLeaderMode = LeaderMode::WIZ_LEADER;
+          if (xSemaphoreTake(stateMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            currentLeaderMode = LeaderMode::IN_SYNC;
+            // Update from read state
+            lastWizBroadcastReceived = millis(); // Reset timeout
+            processWizStateUpdate(wizState);
+            currentLeaderMode = LeaderMode::WIZ_LEADER;
+            xSemaphoreGive(stateMutex);
+          } else {
+            Serial.printf("WizLeader: Failed to acquire mutex for state update\n");
+          }
         }
         else
         {
@@ -287,7 +292,7 @@ public:
     BaseType_t taskResult = xTaskCreate(
         communicationTaskFunction,
         taskName.c_str(),
-        4096, // Stack size
+        8192, // Stack size
         this, // Parameter (this instance)
         10,   // Priority
         &communicationTask);
@@ -304,21 +309,28 @@ public:
 
   ~ZigbeeWizLight()
   {
-    // Stop the communication task
+    // Stop the communication task first
     if (communicationTask != nullptr)
     {
+      Serial.printf("Deleting communication task for bulb %s\n", wizBulb.mac.c_str());
       vTaskDelete(communicationTask);
       communicationTask = nullptr;
+      // Small delay to ensure task cleanup completes
+      vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    // Delete the mutex
+    // Delete the mutex after task is stopped
     if (stateMutex != nullptr)
     {
       vSemaphoreDelete(stateMutex);
       stateMutex = nullptr;
     }
 
-    delete zigbeeLight;
+    // Delete Zigbee light object
+    if (zigbeeLight != nullptr) {
+      delete zigbeeLight;
+      zigbeeLight = nullptr;
+    }
   }
 
   ZigbeeHueLight *getZigbeeLight()
@@ -447,7 +459,7 @@ public:
       currentBlue = -1;
     if (currentRed >=0  && currentBlue >= 0 && currentGreen >= 0) 
     {
-      espXyColor_t xy_color = espRgbColorToXYColor({(uint8_t) currentRed, (uint8_t) currentBlue, (uint8_t) currentGreen});
+      espXyColor_t xy_color = espRgbColorToXYColor({(uint8_t) currentRed, (uint8_t) currentGreen, (uint8_t) currentBlue});
       espRgbColor_t rgb = espXYToRgbColor(255, xy_color.x, xy_color.y);
       currentRed = rgb.r;
       currentGreen = rgb.g;
@@ -460,7 +472,11 @@ public:
     else
       currentTemperature = -1; // Kelvin to mireds
 
-    // Update Zigbee light to match Wiz state
+    if (zigbeeLight == nullptr) {
+      Serial.printf("ERROR: zigbeeLight is null in processWizStateUpdate\n");
+      return;
+    }
+
     zigbeeLight->setLightState(currentState);
     if (wizBulb.features.brightness)
     {
