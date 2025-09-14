@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Win2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-compatible devices for Philips Hue ecosystems. The project runs on Seeed XIAO ESP32-C6 hardware and bridges WiFi-based WiZ lights to Zigbee networks, enabling control through Hue bridges and apps.
+Wiz2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-compatible devices for Philips Hue ecosystems. The project runs on Seeed XIAO ESP32-C6 hardware and bridges WiFi-based WiZ lights to Zigbee networks, enabling control through Hue bridges and apps.
 
 ## Architecture Overview
 
