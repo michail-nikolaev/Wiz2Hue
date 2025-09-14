@@ -16,16 +16,17 @@ Wiz2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Capability Detection**: Parses module names to determine bulb types (RGB, RGBW, TW, DW, Socket, Fan)
 - **State Management**: Reads/writes bulb state with capability-aware filtering using AsyncUDP for improved performance
 - **JSON Serialization**: Complete bidirectional conversion for debugging and data persistence
-- **Health Monitoring**: Tracks communication failures and triggers system restart on excessive failures
+- **Health Monitoring**: Tracks communication failures for logging (no automatic restart)
 
 **Zigbee Bridge (`src/lights.cpp`)**
 - **Dynamic Light Creation**: Creates Zigbee lights dynamically based on discovered WiZ bulbs
-- **ZigbeeWizLight Class**: Encapsulates each Zigbee-WiZ light pair with individual state management
+- **ZigbeeWizLight Class**: Encapsulates each Zigbee-WiZ light pair with dual-mode leader system
+- **Dual-Mode Synchronization**: Intelligent bidirectional sync with WIZ_LEADER/HUE_LEADER modes
 - **Multi-threaded Architecture**: Uses FreeRTOS tasks for asynchronous communication with individual WiZ bulbs
 - **Thread-Safe State Management**: FreeRTOS mutexes protect shared state and filesystem operations
-- **Rate Limiting**: Individual 100ms rate limiting per light to prevent WiZ bulb overload
-- **State Synchronization**: Reads actual WiZ bulb state on startup for accurate initial state
-- **Zigbee Protocol**: ESP32-C6 Zigbee stack integration for network communication
+- **Adaptive Rate Limiting**: 100ms command interval, 5s WiZ-leader polling, 10s Hue-leader resend
+- **State Synchronization**: Reads actual WiZ bulb state on startup and during mode transitions
+- **Zigbee Protocol**: ESP32-C6 Zigbee stack integration for network communication (ZIGBEE_ROUTER mode)
 - **Device Registration**: Manages device pairing and network joining
 - **Network Monitoring**: Periodic Zigbee connection status checks with automatic restart on failure
 
@@ -33,7 +34,7 @@ Wiz2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Main Application Logic**: Setup, loop, and system coordination
 - **Reset System**: Unified reset with visual feedback and reliable filesystem clearing
 - **Button Handling**: Reset available during all connection phases (WiFi, Zigbee, setup, main loop)
-- **Connection Monitoring**: Automatic monitoring and restart on WiFi, Zigbee, or WiZ failures
+- **Connection Monitoring**: Automatic monitoring and restart on WiFi/Zigbee failures (WiZ failures logged only)
 - **FreeRTOS Integration**: Uses FreeRTOS delay functions for proper task scheduling
 
 **Network Layer (`src/wifi.cpp`)**
@@ -52,7 +53,8 @@ Wiz2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **`WizBulbState`**: Current device state with -1 indicating "unknown" values
 **`Features`**: Capability flags (brightness, color, color_tmp, effect, fan) with Kelvin ranges
 **`BulbClass`**: Enum categorizing bulb types for appropriate command filtering
-**`ZigbeeWizLight`**: Class managing individual Zigbee-WiZ light pairs with state and rate limiting, includes FreeRTOS communication task
+**`ZigbeeWizLight`**: Class managing individual Zigbee-WiZ light pairs with dual-mode leader system and FreeRTOS communication tasks
+**`LeaderMode`**: Enum with three states: WIZ_LEADER (default), HUE_LEADER (temporary), and IN_SYNC (synchronization state)
 
 ### State Management Pattern
 
@@ -64,11 +66,15 @@ Wiz2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 6. **Initial State Sync**: Each ZigbeeWizLight reads actual WiZ bulb state on startup
 7. **State Reading**: `getBulbState()` queries current device state via AsyncUDP "getPilot" with callback-based response handling
 8. **State Setting**: `setBulbState()` uses capability-aware filtering to send only supported parameters via AsyncUDP
-9. **Multi-threaded Communication**: Each bulb has a dedicated FreeRTOS task for asynchronous communication
-10. **Thread-Safe Operations**: State updates and filesystem operations protected by FreeRTOS mutexes
-11. **Rate Limited Updates**: Individual 100ms rate limiting per light with 10-second periodic refresh  
-12. **Smart Color Handling**: Detects RGB vs temperature parameter changes and sends only relevant commands
-13. **JSON Debug**: All operations output structured JSON for debugging
+9. **Dual-Mode Leader System**: Implements intelligent bidirectional synchronization between WiZ and Zigbee
+   - **WIZ_LEADER Mode**: Default state where WiZ broadcasts control Zigbee state updates
+   - **HUE_LEADER Mode**: Temporary mode (5s timeout) triggered by Hue commands, forces WiZ to follow Zigbee
+   - **IN_SYNC State**: Prevents feedback loops during state synchronization operations
+10. **Multi-threaded Communication**: Each bulb has a dedicated FreeRTOS task for asynchronous communication
+11. **Thread-Safe Operations**: State updates and filesystem operations protected by FreeRTOS mutexes
+12. **Rate Limited Updates**: Individual 100ms rate limiting per light with 5-second periodic refresh in WIZ_LEADER mode
+13. **Smart Color Handling**: Detects RGB vs temperature parameter changes and sends only relevant commands
+14. **JSON Debug**: All operations output structured JSON for debugging
 
 ### File System Operations
 
@@ -84,7 +90,7 @@ Wiz2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 **Target**: Seeed XIAO ESP32-C6 (board: `seeed_xiao_esp32c6`)
 **Framework**: Arduino ESP32 
 **Platform**: Custom ESP32 platform with Zigbee support
-**Partition**: Uses `zigbee_spiffs.csv` partition table (build flag: `-DZIGBEE_MODE_ED`)
+**Partition**: Uses `zigbee_spiffs.csv` partition table (build flag: `-DZIGBEE_MODE_ZCZR`)
 **Filesystem**: LittleFS for persistent storage (uses "spiffs" partition name for Arduino compatibility)
 
 **Pin Assignments:**
@@ -140,13 +146,20 @@ Wiz2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 - **Conflict Prevention**: Uses signed integers (int16_t) with -1 values to properly exclude parameters
 - **Fallback Logic**: When no specific change detected, prioritizes RGB if any color values present
 
+**Dual-Mode Leader System**:
+- **WIZ_LEADER Mode (Default)**: WiZ bulb controls state, system polls bulb every 5 seconds to detect changes
+- **HUE_LEADER Mode (Temporary)**: Triggered by Hue commands, forces WiZ to follow Zigbee state with 5-second timeout
+- **IN_SYNC State**: Temporary state during synchronization to prevent feedback loops
+- **Mode Transitions**: Automatic timeout-based switching between leader modes
+- **Polling-Based Monitoring**: Regular state polling instead of broadcast listening for simplicity
+
 **WiZ Module Recognition**: Comprehensive support for WiZ module naming (ESP01/ESP14/ESP24/ESP25_SH/DH/LED_RGB/TW/DW)
-**Periodic Updates**: Every 10 seconds, last known state is resent to ensure bulbs stay synchronized
-**Optimized Callbacks**: Minimal Serial output in callbacks to reduce processing lag (optional debug mode available)
+**Adaptive Periodic Updates**: 5-second WiZ state polling in WIZ_LEADER mode, 10-second Hue command resend in HUE_LEADER mode
+**Resilient Operation**: No automatic system restart on WiZ communication failures (bulbs can be physically turned off)
 **Color Temperature**: Proper mireds/Kelvin conversions with validation and range clamping to prevent invalid values
 **Test Mode Enhancement**: During Zigbee connection, cycles through random colors and temperatures for visual feedback
 **Task-based Communication**: FreeRTOS tasks handle periodic updates and state changes asynchronously
-**Filesystem Coordination**: Global mutex ensures thread-safe settings saves across all bulb tasks
+**Filesystem Coordination**: Removed individual light settings files, global mutex ensures thread-safe operations
 
 ### IP Address Management
 
@@ -167,7 +180,7 @@ Wiz2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 ## Configuration
 
 **Network Settings**: Configure WiFi credentials in `src/secrets.h` (gitignored)
-**Zigbee Mode**: Currently configured as End Device (`-DZIGBEE_MODE_ED`)
+**Zigbee Mode**: Currently configured as Coordinator (`-DZIGBEE_MODE_ZCZR`)
 **Serial Monitor**: 115200 baud for debug output and state monitoring
 **File System**: LittleFS mounted automatically, uses "spiffs" partition for Arduino compatibility
 **Reset Behavior**: 3+ second button hold with fast LED blinking clears both filesystem cache and Zigbee network
@@ -186,15 +199,36 @@ Wiz2Hue is an ESP32-based IoT bridge that converts WiZ smart lights into Zigbee-
 
 **Automatic Monitoring System**:
 - **WiFi Monitoring**: Checks connection status every 30 seconds with automatic reconnection attempts (10-second timeout)
-- **Zigbee Monitoring**: Verifies network connectivity every 60 seconds  
-- **WiZ Health Tracking**: Monitors communication failures with 10-failure threshold before restart
-- **System Recovery**: Automatic ESP.restart() on connection loss or critical health issues
+- **Zigbee Monitoring**: Verifies network connectivity every 60 seconds
+- **WiZ Health Tracking**: Monitors communication failures for logging purposes only (no automatic restart)
+- **System Recovery**: Automatic ESP.restart() on WiFi/Zigbee connection loss only
 - **Non-blocking Design**: All monitoring uses millis() timing to avoid interfering with light command processing
 
 **Failure Recovery Patterns**:
 1. **WiFi Disconnection**: Attempts reconnection, restarts system if failed
 2. **Zigbee Network Loss**: Immediate system restart to rejoin network
-3. **WiZ Communication Issues**: Tracks consecutive failures, restarts after threshold exceeded
+3. **WiZ Communication Issues**: Logs failures but continues operation (bulbs may be physically off)
 4. **Manual Reset**: 3+ second button hold for immediate factory reset and restart
 
-The system performs automatic WiZ discovery with intelligent caching - uses stored lights for fast startup, network discovery as fallback, creates dynamic Zigbee lights with individual FreeRTOS communication tasks, thread-safe state management with mutex protection, comprehensive connection monitoring with automatic recovery, and outputs structured JSON logs for monitoring and debugging.
+## Dual-Mode Leader Operation
+
+The system implements intelligent bidirectional synchronization between WiZ and Zigbee devices:
+
+**Default Operation (WIZ_LEADER Mode)**:
+- WiZ bulb state is monitored via periodic polling
+- Periodic 5-second state polling to detect WiZ changes
+- Updates Zigbee light to match WiZ state changes
+
+**Hue Command Handling (HUE_LEADER Mode)**:
+- Triggered by any Zigbee/Hue command
+- Sends commands to WiZ bulb to match Zigbee state
+- 5-second timeout automatically returns to WIZ_LEADER mode
+- Prevents feedback loops with IN_SYNC state during updates
+
+**Resilient Design**:
+- No system restart on WiZ communication failures
+- Bulbs can be physically turned off without affecting system stability
+- Continues operation even when some bulbs are unreachable
+- Comprehensive logging for debugging without system disruption
+
+The system performs automatic WiZ discovery with intelligent caching, creates dynamic Zigbee lights with dual-mode synchronization, uses individual FreeRTOS communication tasks with thread-safe state management, and provides comprehensive monitoring with selective recovery for maximum uptime.

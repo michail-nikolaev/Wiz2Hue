@@ -25,8 +25,7 @@ std::vector<WizBulbInfo> globalDiscoveredBulbs;
 unsigned long lastConnectionCheck = 0;
 unsigned long lastWiFiCheck = 0;
 unsigned long lastZigbeeCheck = 0;
-const unsigned long CONNECTION_CHECK_INTERVAL = 30000;  // 30 seconds
-const unsigned long WIFI_CHECK_INTERVAL = 30000;       // 30 seconds  
+const unsigned long WIFI_CHECK_INTERVAL = 30000;       // 30 seconds
 const unsigned long ZIGBEE_CHECK_INTERVAL = 60000;     // 60 seconds
 
 void setup()
@@ -51,36 +50,46 @@ void setup()
   wifi_connect(RED_PIN, button);
 
   // Initialize filesystem
-  if (!initFileSystem()) {
+  if (!initFileSystem())
+  {
     Serial.println("Failed to initialize filesystem - continuing without caching");
   }
 
   delay(1000);
   bool lightsFromCache = false;
   globalDiscoveredBulbs = discoverOrLoadLights(broadcastIP(), &lightsFromCache);
-  
-  if (lightsFromCache) {
+
+  if (lightsFromCache)
+  {
     Serial.printf("Light discovery completed. Loaded %d Wiz bulbs from cache with full capability information.\n", globalDiscoveredBulbs.size());
-  } else {
+  }
+  else
+  {
     Serial.printf("Light discovery completed. Discovered %d Wiz bulbs via network scan with full capability information.\n", globalDiscoveredBulbs.size());
   }
-  
+
   // Read and print current state of each discovered bulb
-  if (globalDiscoveredBulbs.size() > 0) {
+  if (globalDiscoveredBulbs.size() > 0)
+  {
     Serial.println("\n=== Reading current bulb states ===");
-    for (size_t i = 0; i < globalDiscoveredBulbs.size(); i++) {
+    for (size_t i = 0; i < globalDiscoveredBulbs.size(); i++)
+    {
       Serial.printf("\nReading state of bulb %d/%d: %s\n", i + 1, globalDiscoveredBulbs.size(), globalDiscoveredBulbs[i].ip.c_str());
-      
+
       WizBulbState currentState = getBulbState(globalDiscoveredBulbs[i]);
-      
-      if (currentState.isValid) {
+
+      if (currentState.isValid)
+      {
         Serial.printf("Current state: %s\n", wizBulbStateToJson(currentState).c_str());
-      } else {
+      }
+      else
+      {
         Serial.printf("Failed to read state: %s\n", currentState.errorMessage.c_str());
       }
-      
+
       // Add small delay between state requests
-      if (i < globalDiscoveredBulbs.size() - 1) {
+      if (i < globalDiscoveredBulbs.size() - 1)
+      {
         delay(300);
       }
     }
@@ -92,7 +101,7 @@ void setup()
   Serial.println();
 
   delay(500);
-  
+
   // Check for reset button during setup
   checkForReset(button);
 }
@@ -108,18 +117,20 @@ void checkForReset(int button)
     bool ledState = false;
     unsigned long lastBlink = millis();
     const int BLINK_INTERVAL = 100; // Fast blink every 100ms
-    
+
     while (digitalRead(button) == LOW)
     {
       // Fast blink built-in LED while button is held
-      if (millis() - lastBlink >= BLINK_INTERVAL) {
+      if (millis() - lastBlink >= BLINK_INTERVAL)
+      {
         ledState = !ledState;
         digitalWrite(LED_BUILTIN, ledState ? HIGH : LOW);
         lastBlink = millis();
       }
-      
-      vTaskDelay(pdMS_TO_TICKS(10));; // Short delay to prevent excessive CPU usage
-      
+
+      vTaskDelay(pdMS_TO_TICKS(10));
+      ; // Short delay to prevent excessive CPU usage
+
       if ((millis() - startTime) > 3000)
       {
         // If key pressed for more than 3secs, perform unified system reset
@@ -128,7 +139,7 @@ void checkForReset(int button)
         resetSystem();
       }
     }
-    
+
     // Button released - turn off LED
     digitalWrite(LED_BUILTIN, LOW);
   }
@@ -136,51 +147,46 @@ void checkForReset(int button)
 
 void resetSystem()
 {
-    Serial.println("=== System Reset ===");
-    
-    // Clear LittleFS cache
-    clearFileSystemCache();
-    
-    // Reset Zigbee network
-    Serial.println("Resetting Zigbee network...");
-    hue_reset();
-    
-    Serial.println("System reset complete - device will restart");
-    delay(500); // Additional delay to ensure all operations complete
-    ESP.restart();
+  Serial.println("=== System Reset ===");
+
+  // Clear LittleFS cache
+  clearFileSystemCache();
+
+  // Reset Zigbee network
+  Serial.println("Resetting Zigbee network...");
+  hue_reset();
+
+  Serial.println("System reset complete - device will restart");
+  delay(500); // Additional delay to ensure all operations complete
+  ESP.restart();
 }
 
-void checkConnections() {
+void checkConnections()
+{
   unsigned long currentTime = millis();
-  
+
   // Check WiFi connection
-  if (currentTime - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
-    if (!checkWiFiConnection()) {
+  if (currentTime - lastWiFiCheck >= WIFI_CHECK_INTERVAL)
+  {
+    if (!checkWiFiConnection())
+    {
       Serial.println("WiFi monitoring detected connection loss - restarting system");
       vTaskDelay(pdMS_TO_TICKS(1000));
       ESP.restart();
     }
     lastWiFiCheck = currentTime;
   }
-  
+
   // Check Zigbee connection
-  if (currentTime - lastZigbeeCheck >= ZIGBEE_CHECK_INTERVAL) {
-    if (!checkZigbeeConnection()) {
+  if (currentTime - lastZigbeeCheck >= ZIGBEE_CHECK_INTERVAL)
+  {
+    if (!checkZigbeeConnection())
+    {
       Serial.println("Zigbee monitoring detected connection loss - restarting system");
       vTaskDelay(pdMS_TO_TICKS(1000));
       ESP.restart();
     }
     lastZigbeeCheck = currentTime;
-  }
-  
-  // Check WiZ bulb health
-  if (currentTime - lastConnectionCheck >= CONNECTION_CHECK_INTERVAL) {
-    if (!checkWizBulbHealth()) {
-      Serial.println("WiZ bulb health critical - restarting system");
-      vTaskDelay(pdMS_TO_TICKS(1000));
-      ESP.restart();
-    }
-    lastConnectionCheck = currentTime;
   }
 }
 
